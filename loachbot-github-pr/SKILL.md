@@ -30,8 +30,8 @@ gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="cre
 ### 2. Check out the project and pull request locally if it isn't already
 
 ```bash
-gh repo clone <owner/repo> /tmp/loachbot/<repo>
-cd /tmp/loachbot/<repo>
+gh repo clone <owner/repo> ~/Projects/<repo>
+cd ~/Projects/<repo>
 gh pr co <number>
 ```
 
@@ -87,5 +87,5 @@ gh pr ready <number> --repo <owner/repo>
 
 - Work one item at a time, most recently updated first
 - Never post comments
-- If a repo needs to be cloned, use a temp directory under `/tmp/loachbot/`
+- If a repo needs to be cloned, use a the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers

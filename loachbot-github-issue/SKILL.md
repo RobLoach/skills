@@ -67,6 +67,6 @@ gh issue edit <number> --repo <owner/repo> --remove-assignee="@me"
 
 - Work on exactly one issue per run
 - Never post comments. Un-assign silently.
-- If a repo needs to be cloned, use a temp directory under `/tmp/loachbot/`
+- If a repo needs to be cloned, use a the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
 - Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"
