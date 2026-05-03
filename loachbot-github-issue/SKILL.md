@@ -30,6 +30,9 @@ gh api repos/<owner>/<repo>/issues/<number>/reactions --jq '.[] | select(.conten
 
 Skip any issue where that returns `RobLoach`. Pick the first issue that does **not** have that reaction and proceed with it. If all issues have a 😕, report "Nothing to do" and stop.
 
+Once you pick an issue, report its URL to the user immediately:
+> Working on: https://github.com/<owner>/<repo>/issues/<number>
+
 ### 2. Understand the issue
 
 - Read the full body: `gh api repos/<owner/repo>/issues/<number>`
@@ -62,6 +65,9 @@ After completing work successfully, un-assign the issue. Do not make any other c
 ```bash
 gh issue edit <number> --repo <owner/repo> --remove-assignee="@me"
 ```
+
+Then report the completed PR URL to the user:
+> Done: https://github.com/<owner>/<repo>/pull/<pr-number>
 
 ## Rules
 

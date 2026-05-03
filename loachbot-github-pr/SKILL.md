@@ -27,6 +27,9 @@ gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="cre
 gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="created" --limit 1
 ```
 
+Once you find a PR, report its URL to the user immediately:
+> Working on: https://github.com/<owner>/<repo>/pull/<number>
+
 ### 2. Check out the project and pull request locally if it isn't already
 
 ```bash
@@ -80,6 +83,9 @@ If a comment requires human judgment or a design decision that can't be resolved
 # Mark the Pull Request as Ready
 gh pr ready <number> --repo <owner/repo>
 ```
+
+Then report the completed PR URL to the user:
+> Done: https://github.com/<owner>/<repo>/pull/<number>
 
 ### 6. `/clear` context before processing the next PR
 
