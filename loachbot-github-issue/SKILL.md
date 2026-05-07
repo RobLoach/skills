@@ -22,13 +22,7 @@ gh search issues --assignee=@me --state=open --limit 10 --author=@me --sort upda
 
 If no items are found, report "Nothing to do" and stop.
 
-For each issue (most-recently-updated first), check whether it already has a 😕 reaction from me:
-
-```bash
-gh api repos/<owner>/<repo>/issues/<number>/reactions --jq '.[] | select(.content == "confused") | .user.login'
-```
-
-Skip any issue where that returns `RobLoach`. Pick the first issue that does **not** have that reaction and proceed with it. If all issues have a 😕, report "Nothing to do" and stop.
+For each issue (most-recently-updated first), skip any whose title ends with `(Needs Info)`. Pick the first issue that does **not** have that suffix and proceed with it. If all issues have `(Needs Info)` in their title, report "Nothing to do" and stop.
 
 Once you pick an issue, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/issues/<number>
@@ -51,11 +45,11 @@ gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee Ro
 
 ### 4. When the task is unclear
 
-If you don't know what to do or need clarification, post a short question as a comment and add a 😕 reaction — then stop. Do **not** un-assign.
+If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title — then stop. Do **not** un-assign.
 
 ```bash
 gh issue comment <number> --repo <owner/repo> --body "<one short question>"
-gh api repos/<owner>/<repo>/issues/<number>/reactions -f content=confused
+gh issue edit <number> --repo <owner/repo> --title "<original title> (Needs Info)"
 ```
 
 ### 5. Un-assign when done
