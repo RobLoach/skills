@@ -87,6 +87,8 @@ gh pr ready <number> --repo <owner/repo>
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<number>
 
+### 6. Update the PR title and body as needed
+
 ## Rules
 
 - Work one item at a time, most recently updated first
