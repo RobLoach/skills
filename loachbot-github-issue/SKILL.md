@@ -55,7 +55,7 @@ git checkout -b fix/<issue-slug>
 Implement the fix, test where possible, then open a PR:
 ```bash
 git push origin HEAD
-gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee RobLoach
+gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee @me
 ```
 
 ### 4. When the task is unclear
@@ -81,7 +81,7 @@ Then report the completed PR URL to the user:
 ## Rules
 
 - Work on exactly one issue per run
-- Never post comments. Un-assign silently.
-- If a repo needs to be cloned, use a the Projects directory at `~/Projects`
+- Never post comments except to ask for clarification (see Step 4). Un-assign silently.
+- If a repo needs to be cloned, use the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
 - Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"
