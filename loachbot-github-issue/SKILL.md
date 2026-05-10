@@ -35,20 +35,27 @@ Once you pick an issue, report its URL to the user immediately:
 
 ### 3. Do the work
 
-Clone the repo with SSH if it doesn't already exist locally. Before creating a branch, pull the latest from the default branch and update any submodules:
+Clone the repo with SSH if it doesn't already exist locally, then pull latest and update submodules before branching:
 ```bash
+# If cloning fresh:
+git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
+cd ~/Projects/<repo>
+
 # If the repo already exists locally:
 git checkout <default-branch>
+git reset --hard origin/<default-branch>
+git clean -fd
 git pull origin <default-branch>
 git submodule update --init --recursive
-# Then create the work branch:
+
+# Then create the work branch from the clean default branch:
 git checkout -b fix/<issue-slug>
 ```
 
 Implement the fix, test where possible, then open a PR:
 ```bash
 git push origin HEAD
-gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee RobLoach
+gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee @me
 ```
 
 ### 4. When the task is unclear
@@ -74,7 +81,7 @@ Then report the completed PR URL to the user:
 ## Rules
 
 - Work on exactly one issue per run
-- Never post comments. Un-assign silently.
-- If a repo needs to be cloned, use a the Projects directory at `~/Projects`
+- Never post comments except to ask for clarification (see Step 4). Un-assign silently.
+- If a repo needs to be cloned, use the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
 - Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"

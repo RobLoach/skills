@@ -9,7 +9,7 @@ description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans G
 
 1. Find the latest GitHub Draft Pull Requests that have been created by me, and assigned to me
 ```
-gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="created" --limit 1
+gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort=updated --limit 1
 ```
 
 2. Implement the required work directly in a Pull Request
@@ -24,8 +24,10 @@ gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="cre
 
 ```bash
 # Get an open draft Pull Request by myself, assigned to myself
-gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort="created" --limit 1
+gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort=updated --limit 1
 ```
+
+If no items are found, report "Nothing to do" and stop.
 
 Once you find a PR, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
@@ -36,6 +38,7 @@ Once you find a PR, report its URL to the user immediately:
 gh repo clone <owner/repo> ~/Projects/<repo>
 cd ~/Projects/<repo>
 gh pr co <number>
+git submodule update --init --recursive
 ```
 
 ### 3. Understand the Pull Request
@@ -75,9 +78,11 @@ gh api repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions \
 
 The comment ID can be extracted from the `id` field of the comment JSON.
 
-If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment.
+If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), report this to the user and stop — do not mark the PR as ready.
 
-### 5. Mark the Pull Request as Ready
+### 5. Update the PR title and body as needed
+
+### 6. Mark the Pull Request as Ready
 
 ```bash
 # Mark the Pull Request as Ready
@@ -87,11 +92,9 @@ gh pr ready <number> --repo <owner/repo>
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<number>
 
-### 6. Update the PR title and body as needed
-
 ## Rules
 
 - Work one item at a time, most recently updated first
 - Never post comments
-- If a repo needs to be cloned, use a the Projects directory at `~/Projects`
+- If a repo needs to be cloned, use the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
