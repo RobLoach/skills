@@ -43,10 +43,12 @@ cd ~/Projects/<repo>
 
 # If the repo already exists locally:
 git checkout <default-branch>
+git reset --hard origin/<default-branch>
+git clean -fd
 git pull origin <default-branch>
 git submodule update --init --recursive
 
-# Then create the work branch:
+# Then create the work branch from the clean default branch:
 git checkout -b fix/<issue-slug>
 ```
 
