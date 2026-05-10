@@ -42,6 +42,7 @@ git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<rep
 cd ~/Projects/<repo>
 
 # If the repo already exists locally:
+cd ~/Projects/<repo>
 git checkout <default-branch>
 git reset --hard origin/<default-branch>
 git clean -fd

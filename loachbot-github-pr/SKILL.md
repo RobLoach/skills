@@ -35,7 +35,10 @@ Once you find a PR, report its URL to the user immediately:
 ### 2. Check out the project and pull request locally if it isn't already
 
 ```bash
+# If cloning fresh:
 gh repo clone <owner/repo> ~/Projects/<repo>
+
+# Always cd in and check out the PR branch:
 cd ~/Projects/<repo>
 gh pr co <number>
 git submodule update --init --recursive
@@ -56,7 +59,12 @@ git submodule update --init --recursive
     ```
 - Skip any comment that already has a 🚀 reaction from you - it has already been acted upon:
     ```bash
+    # For regular PR comments:
     gh api repos/<owner>/<repo>/issues/comments/<comment_id>/reactions \
+        --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
+
+    # For inline review comments:
+    gh api repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions \
         --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
     ```
 
@@ -81,6 +89,8 @@ The comment ID can be extracted from the `id` field of the comment JSON.
 If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), report this to the user and stop — do not mark the PR as ready.
 
 ### 5. Update the PR title and body as needed
+
+If the changes made deviate from what the original title or body described, update them to accurately reflect the work done.
 
 ### 6. Mark the Pull Request as Ready
 
