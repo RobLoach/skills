@@ -35,10 +35,23 @@ Once you pick an issue, report its URL to the user immediately:
 
 ### 3. Do the work
 
-Clone the repo with SSH and implement the fix in a branch. Test where possible. Open a PR:
+Clone the repo with SSH if it doesn't already exist locally, then pull latest and update submodules before branching:
 ```bash
+# If cloning fresh:
+git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
+cd ~/Projects/<repo>
+
+# If the repo already exists locally:
+git checkout <default-branch>
+git pull origin <default-branch>
+git submodule update --init --recursive
+
+# Then create the work branch:
 git checkout -b fix/<issue-slug>
-# ... implement ...
+```
+
+Implement the fix, test where possible, then open a PR:
+```bash
 git push origin HEAD
 gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee RobLoach
 ```
