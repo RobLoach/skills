@@ -30,8 +30,13 @@ Once you pick an issue, report its URL to the user immediately:
 ### 2. Understand the issue
 
 - Read the full body: `gh api repos/<owner/repo>/issues/<number>`
-- Read recent comments: `gh api repos/<owner/repo>/issues/<number>/comments`
-- Identify what work is needed based on the thread
+- Read recent comments, filtering to only those from the logged-in user:
+    ```bash
+    AUTHOR=$(gh api user --jq '.login')
+    gh api repos/<owner/repo>/issues/<number>/comments \
+        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body}"
+    ```
+- Identify what work is needed based on the issue body and the author's comments only
 
 ### 3. Do the work
 
