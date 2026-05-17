@@ -68,11 +68,10 @@ For each idea, write a draft in this shape:
 Title: <imperative, under 70 chars>
 Labels: <suggested labels>
 Body:
-  ## Problem
   <what's wrong or missing, with file references>
-  ## Proposed approach
+  ## Suggested Implementation
   <how it could be addressed>
-  ## Acceptance
+  ## QA
   <how we'd know it's done>
 ```
 
