@@ -48,10 +48,11 @@ cd ~/Projects/<repo>
 
 # If the repo already exists locally:
 cd ~/Projects/<repo>
-git checkout <default-branch>
-git reset --hard origin/<default-branch>
+DEFAULT=$(gh api repos/<owner>/<repo> --jq '.default_branch')
+git checkout "$DEFAULT"
+git reset --hard "origin/$DEFAULT"
 git clean -fd
-git pull origin <default-branch>
+git pull origin "$DEFAULT"
 git submodule update --init --recursive
 
 # Then create the work branch from the clean default branch:

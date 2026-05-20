@@ -36,10 +36,11 @@ Once you find a PR, report its URL to the user immediately:
 
 ```bash
 # If cloning fresh:
-gh repo clone <owner/repo> ~/Projects/<repo>
+git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
 
 # Always cd in and check out the PR branch:
 cd ~/Projects/<repo>
+git stash
 gh pr co <number>
 git submodule update --init --recursive
 ```
