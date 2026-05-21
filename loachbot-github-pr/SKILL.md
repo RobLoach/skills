@@ -105,6 +105,7 @@ Then report the completed PR URL to the user:
 ## Rules
 
 - Work one item at a time, most recently updated first
+- When running multiple times, always run sequentially — never in parallel
 - Never post comments
 - If a repo needs to be cloned, use the Projects directory at `~/Projects`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
