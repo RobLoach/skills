@@ -40,7 +40,6 @@ git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<rep
 
 # Always cd in and check out the PR branch:
 cd ~/Projects/<repo>
-git stash
 gh pr co <number>
 git submodule update --init --recursive
 ```
