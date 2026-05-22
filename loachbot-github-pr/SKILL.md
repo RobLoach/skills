@@ -38,9 +38,17 @@ Once you find a PR, report its URL to the user immediately:
 # If cloning fresh:
 git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
 
-# Always cd in and check out the PR branch:
+# If the repo already exists locally, clean it first:
 cd ~/Projects/<repo>
+DEFAULT=$(gh api repos/<owner>/<repo> --jq '.default_branch')
+git checkout "$DEFAULT"
+git fetch origin
+git reset --hard "origin/$DEFAULT"
+git clean -fd
+
+# Then check out the PR branch:
 gh pr co <number>
+git pull
 git submodule update --init --recursive
 ```
 

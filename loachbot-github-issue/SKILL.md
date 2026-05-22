@@ -50,13 +50,13 @@ cd ~/Projects/<repo>
 cd ~/Projects/<repo>
 DEFAULT=$(gh api repos/<owner>/<repo> --jq '.default_branch')
 git checkout "$DEFAULT"
+git fetch origin
 git reset --hard "origin/$DEFAULT"
 git clean -fd
-git pull origin "$DEFAULT"
 git submodule update --init --recursive
 
 # Then create the work branch from the clean default branch:
-git checkout -b fix/<issue-slug>
+git checkout -B fix/<issue-slug>
 ```
 
 Implement the fix, test where possible, then open a PR:

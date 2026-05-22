@@ -27,6 +27,7 @@ DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef -q .defaultBranchR
 git fetch origin --prune
 git checkout "$DEFAULT"
 git reset --hard "origin/$DEFAULT"
+git clean -fd
 git submodule update --init --recursive
 ```
 
@@ -39,6 +40,7 @@ Read enough to form a real opinion. At minimum:
 - Top-level source layout — what modules exist, what they do
 - `git log --oneline -30` — recent direction and active areas
 - `gh issue list --repo <owner>/<repo> --limit 50 --state all` — what's already tracked or recently closed
+- `gh pr list --repo <owner>/<repo> --limit 20 --state open` — work already in-flight (avoid duplicating)
 
 Use the `Explore` subagent if the repo is large.
 
@@ -82,8 +84,10 @@ Skip anything that duplicates an existing open or recently-closed issue.
 Present the list and ask the user which ideas to file. Do **not** create any issue without explicit approval. For each approved idea:
 
 ```bash
-gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --label "<labels>"
+gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
 ```
+
+Only pass `--label` if the label already exists in the repo (`gh label list --repo <owner>/<repo>`). Omit it otherwise — labels can be added manually after filing.
 
 Report each created issue URL back to the user. Leave the rest unfiled.
 
