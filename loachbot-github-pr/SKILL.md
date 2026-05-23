@@ -48,6 +48,8 @@ git clean -fd
 
 # Then check out the PR branch:
 gh pr co <number>
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git branch --set-upstream-to="origin/$BRANCH" "$BRANCH"
 git pull
 git submodule update --init --recursive
 ```
