@@ -40,15 +40,15 @@ Once you pick an issue, report its URL to the user immediately:
 
 ### 3. Do the work
 
-Clone the repo with SSH if it doesn't already exist locally, then pull latest and update submodules before branching:
+Clone the repo if it doesn't already exist locally, then pull latest and update submodules before branching:
 ```bash
 # If cloning fresh:
-git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
+gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
 cd ~/Projects/<repo>
 
 # If the repo already exists locally:
 cd ~/Projects/<repo>
-DEFAULT=$(gh api repos/<owner>/<repo> --jq '.default_branch')
+DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 git checkout "$DEFAULT"
 git fetch origin
 git reset --hard "origin/$DEFAULT"

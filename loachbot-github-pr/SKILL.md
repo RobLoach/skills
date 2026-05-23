@@ -36,11 +36,11 @@ Once you find a PR, report its URL to the user immediately:
 
 ```bash
 # If cloning fresh:
-git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
+gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
 
 # If the repo already exists locally, clean it first:
 cd ~/Projects/<repo>
-DEFAULT=$(gh api repos/<owner>/<repo> --jq '.default_branch')
+DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 git checkout "$DEFAULT"
 git fetch origin
 git reset --hard "origin/$DEFAULT"
@@ -102,10 +102,19 @@ If a comment requires human judgment or a design decision that can't be resolved
 
 If the changes made deviate from what the original title or body described, update them to accurately reflect the work done.
 
-### 6. Mark the Pull Request as Ready
+### 6. Verify CI before marking ready
+
+Wait for all checks to complete and confirm they pass:
 
 ```bash
-# Mark the Pull Request as Ready
+gh pr checks <number> --repo <owner>/<repo> --watch
+```
+
+If any check fails, do **not** mark the PR ready — report the failing checks to the user and stop.
+
+### 7. Mark the Pull Request as Ready
+
+```bash
 gh pr ready <number> --repo <owner/repo>
 ```
 

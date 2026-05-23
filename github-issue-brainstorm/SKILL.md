@@ -19,7 +19,7 @@ Clone with SSH into `~/Projects/<repo>` if missing, otherwise reset to the remot
 
 ```bash
 # Fresh clone:
-git clone --recurse-submodules git@github.com:<owner>/<repo>.git ~/Projects/<repo>
+gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
 
 # Already cloned — sync to latest:
 cd ~/Projects/<repo>
@@ -39,6 +39,7 @@ Read enough to form a real opinion. At minimum:
 - Manifest files (`package.json`, `composer.json`, `pyproject.toml`, `Cargo.toml`, etc.) — purpose, deps, scripts
 - Top-level source layout — what modules exist, what they do
 - `git log --oneline -30` — recent direction and active areas
+- `gh release list --repo <owner>/<repo> --limit 10` — recent releases to understand cadence and what's already shipped
 - `gh issue list --repo <owner>/<repo> --limit 50 --state all` — what's already tracked or recently closed
 - `gh pr list --repo <owner>/<repo> --limit 20 --state open` — work already in-flight (avoid duplicating)
 
