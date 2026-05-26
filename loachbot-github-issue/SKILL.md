@@ -57,6 +57,7 @@ WT=~/Projects/<repo>.worktrees/issue-<number>
 if [ -d "$WT" ]; then
     cd "$WT"
     git checkout fix/<issue-slug>
+    git rebase "origin/$DEFAULT"
 else
     git worktree add -b fix/<issue-slug> "$WT" "origin/$DEFAULT"
     cd "$WT"
