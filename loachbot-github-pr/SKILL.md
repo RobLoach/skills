@@ -32,27 +32,32 @@ If no items are found, report "Nothing to do" and stop.
 Once you find a PR, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
 
-### 2. Check out the project and pull request locally if it isn't already
+### 2. Check out the project and pull request in a dedicated worktree
+
+Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<repo>.worktrees/pr-<number>` and are kept around after the run for inspection.
 
 ```bash
-# If cloning fresh:
-gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
+# Ensure base clone exists (default branch only).
+if [ ! -d ~/Projects/<repo> ]; then
+    gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
+fi
 
-# If the repo already exists locally, clean it first:
 cd ~/Projects/<repo>
-DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-git checkout "$DEFAULT"
-git fetch origin
-git reset --hard "origin/$DEFAULT"
-git clean -fd
+git fetch origin --prune
 
-# Then check out the PR branch:
-gh pr co <number>
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-git branch --set-upstream-to="origin/$BRANCH" "$BRANCH"
-git pull
+# Set up the dedicated worktree for this PR.
+WT=~/Projects/<repo>.worktrees/pr-<number>
+if [ ! -d "$WT" ]; then
+    git worktree add --detach "$WT"
+fi
+cd "$WT"
+
+# Check out the PR head into this worktree. `gh pr checkout` handles fork remotes.
+gh pr checkout <number>
 git submodule update --init --recursive
 ```
+
+If `gh pr checkout` reports the branch is checked out in another worktree, that means a previous run left it on a different path. Resolve by removing the stale worktree (`git worktree remove <stale-path>`) and retrying — do **not** force-switch branches across worktrees.
 
 ### 3. Understand the Pull Request
 
@@ -126,5 +131,7 @@ Then report the completed PR URL to the user:
 - Work one item at a time, most recently updated first
 - When running multiple times, always run sequentially — never in parallel
 - Never post comments
-- If a repo needs to be cloned, use the Projects directory at `~/Projects`
+- If a repo needs to be cloned, use the Projects directory at `~/Projects`. The base clone (`~/Projects/<repo>`) stays on the default branch; per-PR work happens in worktrees at `~/Projects/<repo>.worktrees/pr-<number>`
+- All git operations for a PR must run inside that PR's worktree — never run `git checkout`, `gh pr checkout`, or commits from the base clone
+- Leave the worktree in place after a successful run for inspection; do not run `git worktree remove`
 - Commit with a concise message, 100 characters max; no AI-attribution footers

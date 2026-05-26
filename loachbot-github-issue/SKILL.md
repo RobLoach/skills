@@ -40,28 +40,35 @@ Once you pick an issue, report its URL to the user immediately:
 
 ### 3. Do the work
 
-Clone the repo if it doesn't already exist locally, then pull latest and update submodules before branching:
-```bash
-# If cloning fresh:
-gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
-cd ~/Projects/<repo>
+Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<repo>.worktrees/issue-<number>` and are kept around after the run for inspection.
 
-# If the repo already exists locally:
+```bash
+# Ensure base clone exists (default branch only).
+if [ ! -d ~/Projects/<repo> ]; then
+    gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
+fi
+
 cd ~/Projects/<repo>
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-git checkout "$DEFAULT"
-git fetch origin
-git reset --hard "origin/$DEFAULT"
-git clean -fd
-git submodule update --init --recursive
+git fetch origin --prune
 
-# Then create the work branch from the clean default branch:
-git checkout -B fix/<issue-slug>
+# Set up the dedicated worktree for this issue, branched fresh from the default branch.
+WT=~/Projects/<repo>.worktrees/issue-<number>
+if [ -d "$WT" ]; then
+    cd "$WT"
+    git checkout fix/<issue-slug>
+else
+    git worktree add -b fix/<issue-slug> "$WT" "origin/$DEFAULT"
+    cd "$WT"
+fi
+git submodule update --init --recursive
 ```
 
-Implement the fix, test where possible, then open a PR:
+If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, that means a previous run left it on a different path. Resolve by removing the stale worktree (`git worktree remove <stale-path>`) and retrying — do **not** force-reuse the branch across worktrees.
+
+Implement the fix, test where possible, then open a PR (still inside `$WT`):
 ```bash
-git push origin HEAD
+git push -u origin HEAD
 gh pr create --repo <owner/repo> --title "<title>" --body "<body>" --assignee @me
 ```
 
@@ -90,6 +97,8 @@ Then report the completed PR URL to the user:
 - Work on exactly one issue per run
 - When running multiple times, always run sequentially — never in parallel
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
-- If a repo needs to be cloned, use the Projects directory at `~/Projects`
+- If a repo needs to be cloned, use the Projects directory at `~/Projects`. The base clone (`~/Projects/<repo>`) stays on the default branch; per-issue work happens in worktrees at `~/Projects/<repo>.worktrees/issue-<number>`
+- All git operations for an issue must run inside that issue's worktree — never run `git checkout`, branch creation, or commits from the base clone
+- Leave the worktree in place after a successful run for inspection; do not run `git worktree remove`
 - Commit with a concise message, 100 characters max; no AI-attribution footers
 - Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"
