@@ -40,7 +40,7 @@ Once you pick an issue, report its URL to the user immediately:
 
 ### 3. Do the work
 
-Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<repo>.worktrees/issue-<number>` and are kept around after the run for inspection.
+Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
 
 ```bash
 # Ensure base clone exists (default branch only).
@@ -90,6 +90,13 @@ After completing work successfully, un-assign the issue. Do not make any other c
 gh issue edit <number> --repo <owner/repo> --remove-assignee="@me"
 ```
 
+Then delete the worktree:
+
+```bash
+cd ~/Projects/<repo>
+git worktree remove ~/Projects/<repo>.worktrees/issue-<number> --force
+```
+
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<pr-number>
 
@@ -100,6 +107,6 @@ Then report the completed PR URL to the user:
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - If a repo needs to be cloned, use the Projects directory at `~/Projects`. The base clone (`~/Projects/<repo>`) stays on the default branch; per-issue work happens in worktrees at `~/Projects/<repo>.worktrees/issue-<number>`
 - All git operations for an issue must run inside that issue's worktree — never run `git checkout`, branch creation, or commits from the base clone
-- Leave the worktree in place after a successful run for inspection; do not run `git worktree remove`
+- Delete the worktree after a successful run with `git worktree remove <path> --force` from the base clone
 - Commit with a concise message, 100 characters max; no AI-attribution footers
 - Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"

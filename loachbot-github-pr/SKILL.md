@@ -34,7 +34,7 @@ Once you find a PR, report its URL to the user immediately:
 
 ### 2. Check out the project and pull request in a dedicated worktree
 
-Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<repo>.worktrees/pr-<number>` and are kept around after the run for inspection.
+Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<repo>.worktrees/pr-<number>` and are deleted after the run is complete.
 
 ```bash
 # Ensure base clone exists (default branch only).
@@ -123,6 +123,13 @@ If any check fails, do **not** mark the PR ready — report the failing checks t
 gh pr ready <number> --repo <owner/repo>
 ```
 
+Then delete the worktree:
+
+```bash
+cd ~/Projects/<repo>
+git worktree remove ~/Projects/<repo>.worktrees/pr-<number> --force
+```
+
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<number>
 
@@ -133,5 +140,5 @@ Then report the completed PR URL to the user:
 - Never post comments
 - If a repo needs to be cloned, use the Projects directory at `~/Projects`. The base clone (`~/Projects/<repo>`) stays on the default branch; per-PR work happens in worktrees at `~/Projects/<repo>.worktrees/pr-<number>`
 - All git operations for a PR must run inside that PR's worktree — never run `git checkout`, `gh pr checkout`, or commits from the base clone
-- Leave the worktree in place after a successful run for inspection; do not run `git worktree remove`
+- Delete the worktree after a successful run with `git worktree remove <path> --force` from the base clone
 - Commit with a concise message, 100 characters max; no AI-attribution footers
