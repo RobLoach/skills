@@ -62,46 +62,61 @@ If `gh pr checkout` reports the branch is checked out in another worktree, that 
 ### 3. Understand the Pull Request
 
 - Read the full body of the pull request `gh pr view <number> --repo <owner/repo> --json title,body`
-- Filter PR comments to only those authored by `@RobLoach`:
+- Fetch **unresolved** review threads containing comments by `@RobLoach`. Resolved threads have already been acted upon — skip them.
     ```bash
-    gh pr view <number> --repo <owner/repo> --json comments \
-        --jq '.comments[] | select(.author.login == "RobLoach") | {id, createdAt, url, body}'
+    gh api graphql -F owner=<owner> -F name=<repo> -F number=<number> -f query='
+      query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                comments(first: 100) {
+                  nodes {
+                    databaseId
+                    author { login }
+                    body
+                    path
+                    url
+                  }
+                }
+              }
+            }
+          }
+        }
+      }' \
+      --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+            | select(.isResolved == false)
+            | select(any(.comments.nodes[]; .author.login == "RobLoach"))'
     ```
-- If you also need **review comments** (inline code review), query them separately:
-    ```bash
-    gh api repos/<owner>/<repo>/pulls/<number>/comments \
-        --jq '.[] | select(.user.login == "RobLoach") | {id, created_at, html_url, path, position, body}'
-    ```
-- Skip any comment that already has a 🚀 reaction from you - it has already been acted upon:
-    ```bash
-    # For regular PR comments:
-    gh api repos/<owner>/<repo>/issues/comments/<comment_id>/reactions \
-        --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
-
-    # For inline review comments:
-    gh api repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions \
-        --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
-    ```
+    The thread `id` (a GraphQL node ID like `PRRT_...`) is what you'll use to resolve the thread later.
 
 ### 4. Do the work
 
-Address all the comments @RobLoach suggested, and push the change back directly to the pull request. Do not make any comments. Test where possible.
+Address all the unresolved review threads from @RobLoach, and push the change back directly to the pull request. Do not make any comments. Test where possible.
 
-After addressing each comment, react with a 🚀 to indicate it was acted upon:
+After addressing each thread, resolve it via GraphQL to indicate it was acted upon:
 
 ```bash
-# React to a regular PR comment (issue comment)
-gh api repos/<owner>/<repo>/issues/comments/<comment_id>/reactions \
-    --method POST --field content="rocket"
-
-# React to an inline review comment
-gh api repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions \
-    --method POST --field content="rocket"
+gh api graphql -F threadId=<thread_id> -f query='
+  mutation($threadId: ID!) {
+    resolveReviewThread(input: {threadId: $threadId}) {
+      thread { id isResolved }
+    }
+  }'
 ```
 
-The comment ID can be extracted from the `id` field of the comment JSON.
+The `<thread_id>` is the GraphQL node `id` from the review thread query above (not the comment's `databaseId`).
 
-If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), report this to the user and stop — do not mark the PR as ready.
+If a thread requires human judgment or a design decision that can't be addressed autonomously, leave it unresolved and react with a 😕 on the first comment in the thread so it's clear it was seen but deferred:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/comments/<comment_databaseId>/reactions \
+    --method POST --field content="confused"
+```
+
+Use the `databaseId` of the first comment in the thread (from the review-threads query above). Then continue to the next thread. If **all** threads require human judgment (none were resolved), report this to the user and stop — do not mark the PR as ready.
 
 ### 5. Update the PR title and body as needed
 
