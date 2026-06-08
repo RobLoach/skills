@@ -40,8 +40,8 @@ Read enough to form a real opinion. At minimum:
 - Top-level source layout — what modules exist, what they do
 - `git log --oneline -30` — recent direction and active areas
 - `gh release list --repo <owner>/<repo> --limit 10` — recent releases to understand cadence and what's already shipped
-- `gh issue list --repo <owner>/<repo> --limit 50 --state all` — what's already tracked or recently closed
-- `gh pr list --repo <owner>/<repo> --limit 20 --state open` — work already in-flight (avoid duplicating)
+- `gh issue list --repo <owner>/<repo> --limit 100 --state all` — what's already tracked or recently closed
+- `gh pr list --repo <owner>/<repo> --limit 50 --state all` — work in-flight or recently merged (avoid duplicating)
 
 Use the `Explore` subagent if the repo is large.
 
@@ -78,7 +78,13 @@ Body:
   <how we'd know it's done>
 ```
 
-Skip anything that duplicates an existing open or recently-closed issue.
+For each idea you draft, check it against the list of existing issues and open PRs from step 3. Drop the idea if any existing item:
+
+- addresses the same root cause or code location
+- has the same fix or refactor goal, even under a different title
+- is already merged or in a PR that would make it redundant
+
+Only surface ideas with **no existing overlap**. If all ideas in a category are covered, omit that category entirely.
 
 ### 6. Ask which to file
 
@@ -98,3 +104,4 @@ Report each created issue URL back to the user. Leave the rest unfiled.
 - Never file issues the user did not explicitly approve.
 - Prefer specificity over volume: five sharp ideas beat ten vague ones.
 - Ground each idea in something concrete (a file path, a commit, a TODO, a missing test). No generic suggestions like "add more tests."
+- Never propose an idea that overlaps with an existing issue or PR, even partially. When in doubt, drop the idea rather than propose a near-duplicate.
