@@ -54,6 +54,7 @@ cd "$WT"
 
 # Check out the PR head into this worktree. `gh pr checkout` handles fork remotes.
 gh pr checkout <number>
+git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
