@@ -62,6 +62,7 @@ else
     git worktree add -b fix/<issue-slug> "$WT" "origin/$DEFAULT"
     cd "$WT"
 fi
+git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
