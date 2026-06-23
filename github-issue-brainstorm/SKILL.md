@@ -88,7 +88,15 @@ Only surface ideas with **no existing overlap**. If all ideas in a category are 
 
 ### 6. Ask which to file
 
-Present the list and ask the user which ideas to file. Do **not** create any issue without explicit approval. For each approved idea:
+Present the list and ask the user which ideas to file. Do **not** create any issue without explicit approval.
+
+Before filing, make each approved issue self-contained: the body must include **all memory and content relevant to the issue**, so a reader needs no outside context. Fold in:
+
+- Relevant facts from your memory (`MEMORY.md` and the memory files) that bear on the issue
+- Concrete grounding gathered in step 3 — file paths and line references, code snippets, related commits, releases, and links to related issues or PRs
+- Any project goals, constraints, or background from steps 3–4 that explain *why* this matters
+
+Do not leave context implicit or assume the reader has seen the brainstorming session. For each approved idea:
 
 ```bash
 gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
@@ -104,4 +112,5 @@ Report each created issue URL back to the user. Leave the rest unfiled.
 - Never file issues the user did not explicitly approve.
 - Prefer specificity over volume: five sharp ideas beat ten vague ones.
 - Ground each idea in something concrete (a file path, a commit, a TODO, a missing test). No generic suggestions like "add more tests."
+- Every filed issue must be self-contained — include all relevant memory and content so the issue stands on its own without the brainstorming context.
 - Never propose an idea that overlaps with an existing issue or PR, even partially. When in doubt, drop the idea rather than propose a near-duplicate.
