@@ -1,22 +1,21 @@
 ---
 name: loachbot-github-pr
-description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans GitHub for Pull Requests where RobLoach has set the PR to Draft, implements fixes or updates the pull request, then moves it back to Open. Use when the user asks "run LoachBot Pull Requests".
+description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans GitHub for your own draft Pull Requests, implements fixes or updates the pull request, then moves it back to Open. Use when the user asks "run LoachBot Pull Requests".
 ---
 
 # LoachBot GitHub Pull Request Fixer
 
 ## What it does
 
-1. Find the latest GitHub Draft Pull Requests that have been created by me, and assigned to me
-```
-gh search prs --draft --author="@me" --assignee="@me" --state="open" --sort=updated --limit 1
-```
-
-2. Implement the required work directly in a Pull Request
-
+1. Find the latest Draft Pull Request created by me and assigned to me
+2. Implement the required work directly in the Pull Request
 3. Push the changes back into the Pull Request
+4. Move the Pull Request out of Draft, back into Open
 
-4. Moves the Pull Request out of Draft, and back into Open
+## Prerequisites
+
+- `gh` is authenticated — run `gh auth status` first; if it fails, report that and stop.
+- `~/Projects` exists and is writable (the base clone and per-PR worktrees live there).
 
 ## Workflow
 
@@ -62,31 +61,37 @@ If `gh pr checkout` reports the branch is checked out in another worktree, that 
 
 ### 3. Understand the Pull Request
 
-- Read the full body of the pull request `gh pr view <number> --repo <owner/repo> --json title,body`
-- Filter PR comments to only those authored by `@RobLoach`:
+Determine your own login once, then reuse it for every filter:
+
+```bash
+AUTHOR=$(gh api user --jq '.login')
+```
+
+- Read the full body of the pull request `gh pr view <number> --repo <owner>/<repo> --json title,body`
+- Filter PR comments to only those you authored:
     ```bash
-    gh pr view <number> --repo <owner/repo> --json comments \
-        --jq '.comments[] | select(.author.login == "RobLoach") | {id, createdAt, url, body}'
+    gh pr view <number> --repo <owner>/<repo> --json comments \
+        --jq ".comments[] | select(.author.login == \"$AUTHOR\") | {id, createdAt, url, body}"
     ```
 - If you also need **review comments** (inline code review), query them separately:
     ```bash
     gh api repos/<owner>/<repo>/pulls/<number>/comments \
-        --jq '.[] | select(.user.login == "RobLoach") | {id, created_at, html_url, path, position, body}'
+        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, path, position, body}"
     ```
 - Skip any comment that already has a 🚀 reaction from you - it has already been acted upon:
     ```bash
     # For regular PR comments:
     gh api repos/<owner>/<repo>/issues/comments/<comment_id>/reactions \
-        --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
+        --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
 
     # For inline review comments:
     gh api repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions \
-        --jq '.[] | select(.user.login == "RobLoach" and .content == "rocket")'
+        --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
     ```
 
 ### 4. Do the work
 
-Address all the comments @RobLoach suggested, and push the change back directly to the pull request. Do not make any comments. Test where possible.
+Address all the comments you left (the ones filtered to `$AUTHOR` in step 3), and push the change back directly to the pull request. Do not make any comments. Test where possible.
 
 After addressing each comment, react with a 🚀 to indicate it was acted upon:
 
@@ -121,7 +126,7 @@ If any check fails, do **not** mark the PR ready — report the failing checks t
 ### 7. Mark the Pull Request as Ready
 
 ```bash
-gh pr ready <number> --repo <owner/repo>
+gh pr ready <number> --repo <owner>/<repo>
 ```
 
 Then delete the worktree:
