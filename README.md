@@ -53,7 +53,7 @@ Run LoachBot Pull Requets until there aren't any left
 
 2. Download the folders into `~/.claude/skills`, or use your favourite SKILL installation method, like `gh`:
    ```bash
-   gh skills install robloach/skills
+   gh skills install robloach/skills --scope user
    ```
 
 ## Update
