@@ -69,7 +69,7 @@ gh skills update --all
 The skills bake in a few defaults, feel free to change them to more closely match your workflow, either by editing`SKILL.md` directly, or asking it to remember your own workflows...
 
 - **Clone Location**: Repositories and worktrees will default to `~/Projects/`
-- **Commit Style**: The fixers use one-line commit messages with no AI-attribution footers. Can be overriden your global defaults
+- **Commit Style**: Rely on your global settings for commit messages and attribution
 
 ## License
 
