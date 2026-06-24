@@ -44,22 +44,21 @@ Run LoachBot Pull Requests review
 Run LoachBot Pull Requets until there aren't any left
 ```
 
-## Requirements
-
-- A coding agent, like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
-- [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
-- `git`
-
 ## Installation
 
-Use your favourite SKILL installation method, like copy/paste, or `gh`:
+1. Ensure you have the dependencies available:
+   - Coding agent like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
+   - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
+   - `git`
 
-```bash
-gh skills install robloach/skills
-```
+2. Download the folders into `~/.claude/skills`, or use your favourite SKILL installation method, like `gh`:
+   ```bash
+   gh skills install robloach/skills
+   ```
 
-To update it, copy the SKILL.md files to your coding agent, or use:
+## Update
 
+To update the set of skills:
 ```bash
 gh skills update --all
 ```
