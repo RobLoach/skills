@@ -76,24 +76,20 @@ Identify the work that moves the project toward its goals, then organize it into
 
 Then turn that work into a plan:
 
-- **Prioritize** each issue (P0 must-do → P2 nice-to-have), justified by the goals and gaps from step 4.
-- **Sequence** the work: note dependencies (what must land before what) and group into phases or milestones. If the repo has milestones, map issues onto them; otherwise propose a small set (e.g. "Next", "Soon", "Later").
-- **Right-size** each issue so it's a single coherent unit of work, not an epic. Split anything too large into sequenced sub-issues.
+- **Prioritize** each issue justified by the goals and gaps from step 4.
+- **Right-size** each issue so it's a single coherent unit of work, not an epic. Split anything too large into sub-issues.
 
 Draft each planned issue in this shape:
 
 ```
-Title: <imperative, under 70 chars>
-Priority: <P0 | P1 | P2>
-Milestone/Phase: <name>
-Depends on: <other planned titles, or "none">
-Labels: <suggested labels>
-Body:
-  <what's wrong or missing, with file references>
-  ## Suggested Implementation
-  <how it could be addressed>
-  ## QA
-  <how we'd know it's done>
+# <Title, under 70 chars>
+Effort: <Small/Medium/Large>
+Impact: <Low/Medium/High>
+Body: <what's wrong or missing, with file references>
+## Suggested Implementation
+<how it could be addressed>
+## QA
+<how we'd know it's done>
 ```
 
 For each planned issue, check it against the existing issues and open PRs from step 3. Drop it if any existing item:
@@ -106,7 +102,7 @@ Only keep issues with **no existing overlap**.
 
 ### 6. Present the plan and ask which to file
 
-Present the plan as an ordered list grouped by phase/milestone, with priorities and dependencies visible, then ask the user which issues to file. Do **not** create any issue without explicit approval.
+Present the plan as an ordered list of what you think is the most return-on-investment, then ask the user which issues to create. Do **not** create any issue without explicit approval.
 
 Before filing, make each approved issue self-contained: the body must include **all memory and content relevant to the issue**, so a reader needs no outside context. Fold in:
 
@@ -120,7 +116,7 @@ Do not leave context implicit or assume the reader has seen the planning session
 gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
 ```
 
-Only pass `--label` if the label already exists in the repo (`gh label list --repo <owner>/<repo>`). Omit it otherwise — labels can be added manually after filing. Likewise, only pass `--milestone` if that milestone already exists.
+Only pass `--label` if the label already exists in the repo (`gh label list --repo <owner>/<repo>`). Omit it otherwise — labels can be added manually after filing. Likewise, only pass `--milestone` if the milestone already exists.
 
 Report each created issue URL back to the user, in plan order. Leave the rest unfiled.
 
