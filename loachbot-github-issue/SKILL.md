@@ -3,22 +3,22 @@ name: loachbot-github-issue
 description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the single most-recently-updated GitHub issue created by and assigned to you, implements a fix or pull request, then unassigns the issue. Use when the user asks "run LoachBot Issues".
 ---
 
-# LoachBot GitHub Issue Fixer
+# 🔧 LoachBot GitHub Issue Fixer
 
-## What it does
+## 🎯 What it does
 
 1. Find the single most-recently-updated GitHub issue created by me and assigned to me
 2. Implement the required work in a Pull Request
 3. Un-assign the issue silently (no comments)
 
-## Prerequisites
+## ✅ Prerequisites
 
 - `gh` is authenticated — run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable (the base clone and per-issue worktrees live there).
 
-## Workflow
+## 🔄 Workflow
 
-### 1. Find one actionable issue
+### 1. 🔍 Find one actionable issue
 
 ```bash
 # Issues created by and assigned to me
@@ -48,7 +48,7 @@ gh issue edit <number> --repo <owner>/<repo> --title "<original title without ' 
 Once you pick an issue, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/issues/<number>
 
-### 2. Understand the issue
+### 2. 📖 Understand the issue
 
 - Read the full body: `gh api repos/<owner>/<repo>/issues/<number>`
 - Read recent comments, filtering to only those from the logged-in user:
@@ -59,7 +59,7 @@ Once you pick an issue, report its URL to the user immediately:
     ```
 - Identify what work is needed based on the issue body and the author's comments only
 
-### 3. Do the work
+### 3. 🛠️ Do the work
 
 Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
 
@@ -106,7 +106,7 @@ gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
 
 If a check fails, fix it and push again — do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
-### 4. When the task is unclear
+### 4. ❓ When the task is unclear
 
 If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title — then stop. Do **not** un-assign.
 
@@ -115,7 +115,7 @@ gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
 gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs Info)"
 ```
 
-### 5. Un-assign when done
+### 5. 🏁 Un-assign when done
 
 After completing work successfully, un-assign the issue. Do not make any other comments.
 
@@ -133,7 +133,7 @@ git worktree remove ~/Projects/<repo>.worktrees/issue-<number> --force
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<pr-number>
 
-## Rules
+## 📏 Rules
 
 - Work on exactly one issue per run
 - When running multiple times, always run sequentially — never in parallel

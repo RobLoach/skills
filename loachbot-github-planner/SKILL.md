@@ -3,22 +3,22 @@ name: loachbot-github-planner
 description: Plan the next set of GitHub issues for a repository by reading the code, learning the project's goals, and proposing a prioritized, sequenced plan of issues to file. Use when the user wants to plan upcoming work, build a roadmap of issues, decide what to tackle next, or asks to "run LoachBot Planner" or "plan issues" for a GitHub repo.
 ---
 
-# LoachBot GitHub Planner
+# 🗺️ LoachBot GitHub Planner
 
 Help the user turn a repository's goals into a concrete, prioritized plan of GitHub issues. Read the code, understand where the project is headed, then propose a sequenced plan — what to do, in what order, and why — and optionally file the approved issues.
 
-## Prerequisites
+## ✅ Prerequisites
 
 - `gh` is authenticated — run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable (the repository is cloned there).
 
-## Workflow
+## 🔄 Workflow
 
-### 1. Ask for the repository
+### 1. 💬 Ask for the repository
 
 Ask the user for a GitHub repository (URL or `owner/repo`). Do not proceed without one.
 
-### 2. Get the latest code
+### 2. ⬇️ Get the latest code
 
 Clone into `~/Projects/<repo>` if missing, otherwise reset to the remote default branch and pull.
 
@@ -37,7 +37,7 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-### 3. Get acquainted with the project
+### 3. 🔍 Get acquainted with the project
 
 Read enough to plan with real context. At minimum:
 
@@ -52,7 +52,7 @@ Read enough to plan with real context. At minimum:
 
 Use the `Explore` subagent if the repo is large.
 
-### 4. Establish goals and current state
+### 4. 🎯 Establish goals and current state
 
 Summarize for the user in 3–5 bullets:
 
@@ -62,7 +62,7 @@ Summarize for the user in 3–5 bullets:
 
 This is the baseline the plan builds on.
 
-### 5. Build the plan
+### 5. 🏗️ Build the plan
 
 Identify the work that moves the project toward its goals, then organize it into a plan — not a scattershot list. Aim for **5–10** issues drawn from these areas (skip any that don't apply):
 
@@ -100,7 +100,7 @@ For each planned issue, check it against the existing issues and open PRs from s
 
 Only keep issues with **no existing overlap**.
 
-### 6. Present the plan and ask which to file
+### 6. 📋 Present the plan and ask which to file
 
 Present the plan as an ordered list of what you think is the most return-on-investment, then ask the user which issues to create. Do **not** create any issue without explicit approval.
 
@@ -120,7 +120,7 @@ Only pass `--label` if the label already exists in the repo (`gh label list --re
 
 Report each created issue URL back to the user, in plan order. Leave the rest unfiled.
 
-## Rules
+## 📏 Rules
 
 - Never push branches, open PRs, or modify the repo while planning — this skill is read-only against the codebase.
 - Never file issues the user did not explicitly approve.

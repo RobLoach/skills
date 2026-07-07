@@ -3,23 +3,23 @@ name: loachbot-github-pr
 description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans GitHub for your own draft Pull Requests, implements fixes or updates the pull request, then moves it back to Open. Use when the user asks "run LoachBot Pull Requests".
 ---
 
-# LoachBot GitHub Pull Request Fixer
+# 🔁 LoachBot GitHub Pull Request Fixer
 
-## What it does
+## 🎯 What it does
 
 1. Find the latest Draft Pull Request created by me and assigned to me
 2. Implement the required work directly in the Pull Request
 3. Push the changes back into the Pull Request
 4. Move the Pull Request out of Draft, back into Open
 
-## Prerequisites
+## ✅ Prerequisites
 
 - `gh` is authenticated — run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable (the base clone and per-PR worktrees live there).
 
-## Workflow
+## 🔄 Workflow
 
-### 1. Find a Pull Request
+### 1. 🔍 Find a Pull Request
 
 ```bash
 # Get an open draft Pull Request by myself, assigned to myself
@@ -31,7 +31,7 @@ If no items are found, report "Nothing to do" and stop.
 Once you find a PR, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
 
-### 2. Check out the project and pull request in a dedicated worktree
+### 2. 🌳 Check out the project and pull request in a dedicated worktree
 
 Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<repo>.worktrees/pr-<number>` and are deleted after the run is complete.
 
@@ -59,7 +59,7 @@ git submodule update --init --recursive
 
 If `gh pr checkout` reports the branch is checked out in another worktree, that means a previous run left it on a different path. Resolve by removing the stale worktree (`git worktree remove <stale-path>`) and retrying — do **not** force-switch branches across worktrees.
 
-### 3. Understand the Pull Request
+### 3. 📖 Understand the Pull Request
 
 Determine your own login once, then reuse it for every filter:
 
@@ -89,7 +89,7 @@ AUTHOR=$(gh api user --jq '.login')
         --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
     ```
 
-### 4. Do the work
+### 4. 🛠️ Do the work
 
 Address all the comments you left (the ones filtered to `$AUTHOR` in step 3), and push the change back directly to the pull request. Do not make any comments. Test where possible.
 
@@ -109,11 +109,11 @@ The comment ID can be extracted from the `id` field of the comment JSON.
 
 If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), report this to the user and stop — do not mark the PR as ready.
 
-### 5. Update the PR title and body as needed
+### 5. ✏️ Update the PR title and body as needed
 
 If the changes made deviate from what the original title or body described, update them to accurately reflect the work done.
 
-### 6. Verify CI before marking ready
+### 6. ✅ Verify CI before marking ready
 
 Wait for all checks to complete and confirm they pass:
 
@@ -123,7 +123,7 @@ gh pr checks <number> --repo <owner>/<repo> --watch
 
 If any check fails, do **not** mark the PR ready — report the failing checks to the user and stop.
 
-### 7. Mark the Pull Request as Ready
+### 7. 🚀 Mark the Pull Request as Ready
 
 ```bash
 gh pr ready <number> --repo <owner>/<repo>
@@ -139,7 +139,7 @@ git worktree remove ~/Projects/<repo>.worktrees/pr-<number> --force
 Then report the completed PR URL to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<number>
 
-## Rules
+## 📏 Rules
 
 - Work one item at a time, most recently updated first
 - When running multiple times, always run sequentially — never in parallel
