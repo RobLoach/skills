@@ -8,6 +8,20 @@ My collection of agent skills, focused around the development and maintenance of
 - [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
 - [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
 
+## Installation
+
+1. Ensure you have the dependencies available:
+   - Coding agent like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
+   - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
+   - `git`
+
+2. Download the folders into `~/.claude/skills`, or use your favourite SKILL installation method, like `gh`:
+   ```bash
+   gh skills install robloach/skills --scope user
+   ```
+
+3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
+
 ### GitHub Planner
 
 Reads a repository, learns its goals, and proposes a set of GitHub issues to create within the repository itself.
@@ -52,18 +66,6 @@ Run LoachBot Pull Requests until there aren't any left
 ```
 
 [SKILL.md](loachbot-github-pr/SKILL.md)
-
-## Installation
-
-1. Ensure you have the dependencies available:
-   - Coding agent like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
-   - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
-   - `git`
-
-2. Download the folders into `~/.claude/skills`, or use your favourite SKILL installation method, like `gh`:
-   ```bash
-   gh skills install robloach/skills --scope user
-   ```
 
 ## Update
 
