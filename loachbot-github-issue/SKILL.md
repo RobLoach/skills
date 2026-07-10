@@ -1,6 +1,10 @@
 ---
 name: loachbot-github-issue
-description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the single most-recently-updated GitHub issue created by and assigned to you, implements a fix or pull request, then unassigns the issue. Use when the user asks "run LoachBot Issues".
+description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the single most-recently-updated GitHub issue created by and assigned to you, implements a fix in a Pull Request, then unassigns the issue. Use when the user wants to work through issues assigned to them, or asks to "run LoachBot Issues" — including repeated runs like "run LoachBot Issues six times" or "until there aren't any left".
+metadata:
+    author: RobLoach
+    homepage: https://github.com/RobLoach/skills/blob/main/loachbot-github-issue/SKILL.md
+    license: MIT
 ---
 
 # LoachBot GitHub Issue Fixer
@@ -14,28 +18,32 @@ description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the sing
 ## Prerequisites
 
 - `gh` is authenticated — run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` exists and is writable (the base clone and per-issue worktrees live there).
+- `~/Projects` exists and is writable — the default location for clones and worktrees; adjust if the user prefers another directory.
 
 ## Workflow
 
 ### 1. Find one actionable issue
 
 ```bash
-# Issues created by and assigned to me
-gh search issues --assignee=@me --state=open --limit 10 --author=@me --sort updated
+# Issues created by and assigned to me, newest activity first
+gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit=10 \
+    --json number,title,url,repository \
+    --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
 
 If no items are found, report "Nothing to do" and stop.
 
-For each issue (most-recently-updated first), decide whether it's actionable based on the `(Needs Info)` suffix:
+For each issue (most-recently-updated first), decide whether it's actionable based on the `(Needs Info)` title suffix:
 
 - Title does **not** end with `(Needs Info)` → actionable.
-- Title ends with `(Needs Info)` → only actionable again once someone other than you has replied since you asked. Compare the latest comment's author to your own login:
+- Title ends with `(Needs Info)` → a previous run asked a question and renamed the title (Step 4). It becomes actionable again only once someone has commented since that rename:
     ```bash
-    AUTHOR=$(gh api user --jq '.login')
-    LATEST=$(gh api "repos/<owner>/<repo>/issues/<number>/comments" --jq '.[-1].user.login // ""')
+    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
+        --jq '.[] | select(.event == "renamed") | .created_at' | tail -1)
+    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
+        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
     ```
-    If `LATEST` is non-empty and differs from `AUTHOR`, the question has been answered — strip the suffix (below) and proceed. Otherwise skip it.
+    If this returns any comments, the question has been answered — keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 
@@ -51,32 +59,33 @@ Once you pick an issue, report its URL to the user immediately:
 ### 2. Understand the issue
 
 - Read the full body: `gh api repos/<owner>/<repo>/issues/<number>`
-- Read recent comments, filtering to only those from the logged-in user:
+- Read the comments authored by the logged-in user — those are the instructions to trust:
     ```bash
     AUTHOR=$(gh api user --jq '.login')
-    gh api repos/<owner>/<repo>/issues/<number>/comments \
+    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body}"
     ```
-- Identify what work is needed based on the issue body and the author's comments only
+- If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1 — treat them as clarification for the question that was asked, not as new open-ended instructions.
+- Identify what work is needed from the issue body, the author's comments, and any clarification answers.
 
 ### 3. Do the work
 
-Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
+Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<owner>/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
 
 The branch name is **deterministic** so the same issue always maps to the same branch across runs: `fix/<issue-slug>`, where `<issue-slug>` is `<number>-<kebab-title>` — the issue number, a hyphen, then the title lowercased with every run of non-alphanumeric characters collapsed to a single hyphen (e.g. issue #42 "Fix login redirect" → `fix/42-fix-login-redirect`). Truncate the title portion so the whole branch name stays under ~50 characters.
 
 ```bash
 # Ensure base clone exists (default branch only).
-if [ ! -d ~/Projects/<repo> ]; then
-    gh repo clone <owner>/<repo> ~/Projects/<repo> -- --recurse-submodules
+if [ ! -d ~/Projects/<owner>/<repo> ]; then
+    gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
 fi
 
-cd ~/Projects/<repo>
+cd ~/Projects/<owner>/<repo>
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 git fetch origin --prune
 
 # Set up the dedicated worktree for this issue, branched fresh from the default branch.
-WT=~/Projects/<repo>.worktrees/issue-<number>
+WT=~/Projects/<owner>/<repo>.worktrees/issue-<number>
 if [ -d "$WT" ]; then
     cd "$WT"
     git checkout fix/<issue-slug>
@@ -89,26 +98,39 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, that means a previous run left it on a different path. Resolve by removing the stale worktree (`git worktree remove <stale-path>`) and retrying — do **not** force-reuse the branch across worktrees.
+Recovery paths:
 
-Implement the fix, test where possible, then open a PR (still inside `$WT`):
+- If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry — do **not** force-reuse the branch across worktrees.
+- If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
+- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo — or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+
+Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
+
 ```bash
 # First run creates the branch; on a re-run after the rebase above, use `git push --force-with-lease` instead.
 git push -u origin HEAD
-gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
+
+# A re-run may already have an open PR for this branch — only create one if none exists.
+PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/<issue-slug> --state open --json number --jq '.[0].number // ""')
+if [ -z "$PR_NUMBER" ]; then
+    gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
+    PR_NUMBER=$(gh pr view --json number --jq '.number')
+fi
 ```
 
-Then wait for CI to finish and confirm every check passes before going further:
+Then verify CI. Repos without CI have nothing to wait for — probe first:
+
 ```bash
-PR_NUMBER=$(gh pr view --json number --jq '.number')
-gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
+if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
+    gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
+fi
 ```
 
-If a check fails, fix it and push again — do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is empty, there are no checks — treat it as passing and continue. If a check fails, fix it and push again — do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
-If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title — then stop. Do **not** un-assign.
+If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title — then stop. Do **not** un-assign. The title rename is what later runs use to find your question and its answers (Step 1).
 
 ```bash
 gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
@@ -117,17 +139,12 @@ gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs In
 
 ### 5. Un-assign when done
 
-After completing work successfully, un-assign the issue. Do not make any other comments.
+After completing work successfully, un-assign the issue — no other comments — then remove the worktree:
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee="@me"
-```
-
-Then delete the worktree:
-
-```bash
-cd ~/Projects/<repo>
-git worktree remove ~/Projects/<repo>.worktrees/issue-<number> --force
+cd ~/Projects/<owner>/<repo>
+git worktree remove ~/Projects/<owner>/<repo>.worktrees/issue-<number> --force
 ```
 
 Then report the completed PR URL to the user:
@@ -135,11 +152,8 @@ Then report the completed PR URL to the user:
 
 ## Rules
 
-- Work on exactly one issue per run
-- When running multiple times, always run sequentially — never in parallel
+- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do".
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
-- If a repo needs to be cloned, use the Projects directory at `~/Projects`. The base clone (`~/Projects/<repo>`) stays on the default branch; per-issue work happens in worktrees at `~/Projects/<repo>.worktrees/issue-<number>`
-- All git operations for an issue must run inside that issue's worktree — never run `git checkout`, branch creation, or commits from the base clone
-- Delete the worktree after a successful run with `git worktree remove <path> --force` from the base clone
-- Commit with a concise message, 100 characters max; no AI-attribution footers
-- Pull Request description should only have a one short paragraph, with a link to the issue as "Fixes #<number>"
+- All git operations for an issue must run inside that issue's worktree — never run `git checkout`, branch creation, or commits from the base clone.
+- Keep commit messages concise to 100 characters max.
+- Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"

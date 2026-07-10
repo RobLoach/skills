@@ -5,8 +5,8 @@ A collection of agent skills for automating GitHub workflows, the **LoachBot** f
 ## Features
 
 - GitHub Planner: Creates issues aligned with project goals
-- GitHub Issue Fixer: Tackles some of the issues in Pull Requests
-- GitHub Pull Request Fixer: Address feedback within Pull Requests
+- GitHub Issue Fixer: Implements one assigned issue at a time and opens a Pull Request
+- GitHub Pull Request Fixer: Addresses feedback within draft Pull Requests
 
 ### 1. [GitHub Planner](loachbot-github-planner/SKILL.md)
 
@@ -40,8 +40,8 @@ Finds your draft Pull Requests, addresses your reviewed comments in a dedicated 
 
 ```
 /loachbot-github-pr
-Run LoachBot Pull Requests review
-Run LoachBot Pull Requets until there aren't any left
+Run LoachBot Pull Requests
+Run LoachBot Pull Requests until there aren't any left
 ```
 
 ## Installation
@@ -65,9 +65,9 @@ gh skills update --all
 
 ## Customization
 
-The skills bake in a few defaults, feel free to change them to more closely match your workflow, either by editing`SKILL.md` directly, or asking it to remember your own workflows...
+The skills bake in a few defaults, feel free to change them to more closely match your workflow, either by editing `SKILL.md` directly, or asking it to remember your own workflows...
 
-- **Clone Location**: Repositories and worktrees will default to `~/Projects/`
+- **Clone Location**: Repositories and worktrees default to `~/Projects/<owner>/<repo>`
 - **Commit Style**: Rely on your global settings for commit messages and attribution
 
 ## License
