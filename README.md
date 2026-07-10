@@ -1,6 +1,6 @@
 # Skills
 
-My collection of agent skills, focused around the development and maintenance of open source projects. When used in tandem, they ease managing multiple repositories across code, issues, and pull requests.
+A collection of AI agent skills focused on developing and maintaining open-source projects. When used in tandem, they streamline the management of multiple repositories across code, issues, and pull requests.
 
 ## Features
 
