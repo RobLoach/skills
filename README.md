@@ -22,6 +22,8 @@ My collection of agent skills, focused around the development and maintenance of
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
 
+## Skills
+
 ### GitHub Planner
 
 Reads a repository, learns its goals, and proposes a set of GitHub issues to create within the repository itself.
@@ -34,8 +36,6 @@ plan issues for this project
 LoachBot, can you plan some issues for MyAwesomeProject?
 Plan some issues for my most popular repo
 ```
-
-[SKILL.md](loachbot-github-planner/SKILL.md)
 
 ### GitHub Issue Fixer
 
@@ -50,8 +50,6 @@ Fix the most recent github issue assigned to me
 LoachBot Issue fixes until there aren't any more left
 ```
 
-[SKILL.md](loachbot-github-issue/SKILL.md)
-
 ### GitHub Pull Request Fixer
 
 Finds your draft Pull Requests, addresses your reviewed inline comments in a dedicated worktree, reacts with 🚀 to each comment that was handled, verifies that the CI passes, then marks the PR back to ready for review.
@@ -65,11 +63,9 @@ Address the feedback on my recent pull request
 Run LoachBot Pull Requests until there aren't any left
 ```
 
-[SKILL.md](loachbot-github-pr/SKILL.md)
-
 ## Update
 
-To update the set of skills:
+To update them, use `gh`:
 ```bash
 gh skills update --all
 ```
