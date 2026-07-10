@@ -3,7 +3,7 @@ name: loachbot-github-pr
 description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans GitHub for your own draft Pull Requests, addresses your review comments, then marks the Pull Request ready for review. Use when the user wants to address feedback on their draft pull requests, or asks to "run LoachBot Pull Requests", including repeated runs like "until there aren't any left".
 metadata:
     author: RobLoach
-    homepage: https://github.com/RobLoach/skills/blob/main/loachbot-github-pr/SKILL.md
+    homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-pr/SKILL.md
     license: MIT
 ---
 

@@ -3,7 +3,7 @@ name: loachbot-github-planner
 description: Plan the next set of GitHub issues for a repository by reading the code, learning the project's goals, and proposing a prioritized, sequenced plan of issues to file. Use when the user wants to plan upcoming work, build a roadmap of issues, decide what to tackle next, or asks to "run LoachBot Planner" or "plan issues" for a GitHub repo.
 metadata:
     author: RobLoach
-    homepage: https://github.com/RobLoach/skills/blob/main/loachbot-github-planner/SKILL.md
+    homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-planner/SKILL.md
     license: MIT
 ---
 

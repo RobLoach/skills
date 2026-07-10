@@ -3,7 +3,7 @@ name: loachbot-github-issue
 description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the single most-recently-updated GitHub issue created by and assigned to you, implements a fix in a Pull Request, then unassigns the issue. Use when the user wants to work through issues assigned to them, or asks to "run LoachBot Issues", including repeated runs like "run LoachBot Issues six times" or "until there aren't any left".
 metadata:
     author: RobLoach
-    homepage: https://github.com/RobLoach/skills/blob/main/loachbot-github-issue/SKILL.md
+    homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-issue/SKILL.md
     license: MIT
 ---
 
