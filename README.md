@@ -1,48 +1,57 @@
-# LoachBot Skills
+# Skills
 
-A collection of agent skills for automating GitHub workflows, the **LoachBot** family. Each skill teaches your coding agent a repeatable, end-to-end process for working with GitHub issues and handling pull requests, letting you direct, while it handles the details.
+My collection of agent skills, focused around the development and maintenance of open source projects. When used in tandem, they ease managing multiple repositories across code, issues, and pull requests.
 
 ## Features
 
-- GitHub Planner: Creates issues aligned with project goals
-- GitHub Issue Fixer: Implements one assigned issue at a time and opens a Pull Request
-- GitHub Pull Request Fixer: Addresses feedback within draft Pull Requests
+- [GitHub Planner](#github-planner): Creates issues aligned with project goals
+- [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
+- [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
 
-### 1. [GitHub Planner](loachbot-github-planner/SKILL.md)
+### GitHub Planner
 
-Reads a repository, learns its goals, and proposes a **prioritized, sequenced plan** of GitHub issues, then files the approved ones.
+Reads a repository, learns its goals, and proposes a set of GitHub issues to create within the repository itself.
 
 **Examples:**
 
 ```
 Run LoachBot Planner
-plan issues
+plan issues for this project
+LoachBot, can you plan some issues for MyAwesomeProject?
 Plan some issues for my most popular repo
 ```
 
-### 2. [GitHub Issue Fixer](loachbot-github-issue/SKILL.md)
+[SKILL.md](loachbot-github-planner/SKILL.md)
 
-Picks the most-recently-updated issue *created by and assigned to you*, implements the fix in a dedicated git worktree, opens a Pull Request, verifies CI, then un-assigns. It relies on you to review/merge the Pull Requests. If you have feedback on a PR, post the comments inline on GitHub, and set the PRs to Draft, to be actioned by the *Pull Request Fixer below*.
+### GitHub Issue Fixer
+
+Picks the most-recently-updated issue *created by and assigned to you*, implements the fix in a dedicated git worktree, opens a Pull Request, and verifies CI. It relies on you to review/merge the Pull Requests. If you have feedback on a PR, post the comments inline on GitHub, and set the PRs to Draft, to be actioned by the *Pull Request Fixer below*.
 
 **Examples:**
 
 ```
 run LoachBot Issues
 Run LoachBot Issues six times
+Fix the most recent github issue assigned to me
 LoachBot Issue fixes until there aren't any more left
 ```
 
-### 3. [GitHub Pull Request Fixer](loachbot-github-pr/SKILL.md)
+[SKILL.md](loachbot-github-issue/SKILL.md)
 
-Finds your draft Pull Requests, addresses your reviewed comments in a dedicated worktree, reacts with 🚀 to each comment that was handled, verifies that the CI passes, then marks the PR back to ready for review.
+### GitHub Pull Request Fixer
+
+Finds your draft Pull Requests, addresses your reviewed inline comments in a dedicated worktree, reacts with 🚀 to each comment that was handled, verifies that the CI passes, then marks the PR back to ready for review.
 
 **Examples:**
 
 ```
 /loachbot-github-pr
 Run LoachBot Pull Requests
+Address the feedback on my recent pull request
 Run LoachBot Pull Requests until there aren't any left
 ```
+
+[SKILL.md](loachbot-github-pr/SKILL.md)
 
 ## Installation
 
@@ -69,6 +78,11 @@ The skills bake in a few defaults, feel free to change them to more closely matc
 
 - **Clone Location**: Repositories and worktrees default to `~/Projects/<owner>/<repo>`
 - **Commit Style**: Rely on your global settings for commit messages and attribution
+
+## FAQ
+
+**Why "Loachbot"?**
+: Your skills directory can get messy, so I've opted to namespace these as `loachbot` so that they're easy to find. Also allows explicit calling out when interacting with your coding agent.
 
 ## License
 
