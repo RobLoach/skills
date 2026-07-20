@@ -40,12 +40,15 @@ gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
 cd ~/Projects/<owner>/<repo>
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 git fetch origin --prune
+git status --porcelain
 git checkout "$DEFAULT"
 git reset --hard "origin/$DEFAULT"
 git clean -fd
 git submodule sync --recursive
 git submodule update --init --recursive
 ```
+
+If `git status --porcelain` prints anything, the base clone has uncommitted local changes (notes, an experiment, a stash-in-progress). Do **not** run the checkout/reset/clean: report the dirty state to the user and stop, letting them decide what to do with the local changes.
 
 ### 3. Get acquainted with the project
 
