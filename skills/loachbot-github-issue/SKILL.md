@@ -127,15 +127,15 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for: probe first:
+Then verify CI. Repos without CI have nothing to wait for: probe first, and bound the watch so a stuck check can't hang the run:
 
 ```bash
 if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
+    timeout 30m gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
 fi
 ```
 
-If the rollup is empty, there are no checks: treat it as passing and continue. If a check fails, fix it and push again: do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is empty, there are no checks: treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue: the next run will pick it up once CI has settled. If a check fails, fix it and push again: do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
