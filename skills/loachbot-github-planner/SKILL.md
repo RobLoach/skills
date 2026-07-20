@@ -24,9 +24,15 @@ Help the user turn a repository's goals into a concrete, prioritized plan of Git
 
 ## Workflow
 
-### 1. Ask for the repository
+### 1. Resolve the repository
 
-Ask the user for a GitHub repository (URL or `owner/repo`). Do not proceed without one.
+Determine which GitHub repository to plan for, in this order:
+
+1. A repo named in the prompt or skill arguments (URL or `owner/repo`): use it.
+2. Otherwise, if the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`.
+3. Otherwise ask the user for one (URL or `owner/repo`).
+
+Do not proceed without one.
 
 ### 2. Get the latest code
 
