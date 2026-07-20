@@ -108,6 +108,11 @@ git submodule update --init --recursive
 
 Recovery paths:
 
+- If the worktree has uncommitted changes on entry (`git status --porcelain` is non-empty), they are leftovers from an interrupted run of this same issue. The branch is deterministic and any completed work was pushed, so discard them and continue with the checkout/rebase as normal:
+    ```bash
+    git reset --hard
+    git clean -fd
+    ```
 - If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry: do **not** force-reuse the branch across worktrees.
 - If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists but no worktree has it, a previous completed run left it behind. Reattach it without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop: never keep working in a half-rebased worktree.
