@@ -166,15 +166,15 @@ If the changes made deviate from what the original title or body described, upda
 
 ### 6. Verify CI before marking ready
 
-Repos without CI have nothing to wait for: probe first, then watch:
+Repos without CI have nothing to wait for: probe first, then watch, bounded so a stuck check can't hang the run:
 
 ```bash
 if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    gh pr checks <number> --repo <owner>/<repo> --watch
+    timeout 30m gh pr checks <number> --repo <owner>/<repo> --watch
 fi
 ```
 
-If the rollup is empty, there are no checks: treat it as passing. If any check fails, do **not** mark the PR ready: report the failing checks to the user and stop.
+If the rollup is empty, there are no checks: treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready: it stays draft, and the next run will pick it up once CI has settled. If any check fails, do **not** mark the PR ready: report the failing checks to the user and stop.
 
 ### 7. Mark the Pull Request as ready
 
