@@ -129,9 +129,13 @@ AUTHOR=$(gh api user --jq '.login')
         --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
     ```
 
+The comment, inline-comment, and review-summary fetches above are independent reads: run them as a parallel batch rather than one after another. When understanding what a comment asks for requires digging through the codebase, hand that investigation to a subagent so the file contents it reads never land in the main context — you only need its summary of what each comment implies.
+
 ### 4. Do the work
 
-Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
+Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). For anything beyond a small edit, delegate the code changes to a subagent pointed at this worktree — tell it to `cd "$WT"`, make the change, run the tests, and report back a short summary and the files it touched — so the main context is not filled with file contents and test logs. Where comments touch unrelated parts of the codebase and don't conflict, they can be worked in parallel subagents. The main thread keeps the git, reaction, and ready steps below, which depend on the run's overall state.
+
+Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
 
 ```bash
 git add -A
@@ -193,7 +197,8 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 
 ## Rules
 
-- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run: sequentially, never in parallel: and stop early when a run reports "Nothing to do".
+- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run: sequentially, never in parallel: and stop early when a run reports "Nothing to do". This "sequential, never in parallel" rule governs *which Pull Requests* you process — one at a time — not how you address the comments within a single one.
+- Within a single run, lean on subagents to keep the main context clean: delegate context-heavy work — investigating the codebase, reading files, making the changes a comment asks for — to subagents, and fan independent read-only lookups out in parallel. Reserve the main thread for orchestration and the git/reaction/ready steps that depend on the run's overall state.
 - Never post comments. React and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
 - Keep commit messages concise to 100 characters max.
