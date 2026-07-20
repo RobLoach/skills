@@ -40,7 +40,7 @@ For each PR (most-recently-updated first), decide whether it's actionable based 
 - Title ends with `(Needs Info)` → a previous run parked it because every comment needed human judgment (Step 4). It becomes actionable again only once someone has commented since that rename:
     ```bash
     PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
-        --jq '.[] | select(.event == "renamed") | .created_at' | tail -1)
+        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
     # Any regular or inline review comment newer than the rename?
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq ".[] | select(.created_at > \"$PARKED\") | .id"
