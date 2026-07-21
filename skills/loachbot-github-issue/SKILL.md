@@ -15,6 +15,14 @@ metadata:
 2. Implement the required work in a Pull Request
 3. Un-assign the issue silently (no comments)
 
+## Related skills
+
+Part of the LoachBot trio, chained together by self-assignment:
+
+- **`loachbot-github-planner`** files issues assigned to you, which feed this skill.
+- **`loachbot-github-issue`** (this skill) picks up those issues and opens a Pull Request you authored, assigned to you.
+- **`loachbot-github-pr`** takes over once you review that Pull Request, leave inline comments, and set it back to **Draft**.
+
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
@@ -43,7 +51,7 @@ For each issue (most-recently-updated first), decide whether it's actionable bas
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
     ```
-    If this returns any comments, the question has been answered: keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
+    If this returns any comments, the question has been answered — keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 
@@ -82,7 +90,7 @@ Delegate codebase investigation to subagents rather than reading files into the 
 
 Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<owner>/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
 
-The branch name is **deterministic** so the same issue always maps to the same branch across runs: `fix/<issue-slug>`, where `<issue-slug>` is `<number>-<kebab-title>`: the issue number, a hyphen, then the title lowercased with every run of non-alphanumeric characters collapsed to a single hyphen (e.g. issue #42 "Fix login redirect" → `fix/42-fix-login-redirect`). Truncate the title portion so the whole branch name stays under ~50 characters.
+The branch name is **deterministic** so the same issue always maps to the same branch across runs: `fix/<issue-slug>`, where `<issue-slug>` is `<number>-<kebab-title>`: the issue number, a hyphen, then the title lowercased with every run of non-alphanumeric characters collapsed to a single hyphen (e.g. issue #42 "Fix login redirect" → `fix/42-fix-login-redirect`). Truncate the title portion so the whole branch name stays under ~50 characters. Because the slug depends on the title, editing an issue's title mid-flight changes its branch name and breaks the re-run and recovery paths below, which assume a stable branch; leave in-flight titles alone (the `(Needs Info)` suffix is stripped before the slug is computed, so it doesn't affect the branch).
 
 ```bash
 # Ensure base clone exists (default branch only).
@@ -115,10 +123,10 @@ Recovery paths:
     git reset --hard
     git clean -fd
     ```
-- If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry: do **not** force-reuse the branch across worktrees.
+- If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry — do **not** force-reuse the branch across worktrees.
 - If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists but no worktree has it, a previous completed run left it behind. Reattach it without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
-- If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop: never keep working in a half-rebased worktree.
-- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo: or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
+- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
@@ -136,7 +144,7 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for: probe first, and bound the watch so a stuck check can't hang the run:
+Then verify CI. Repos without CI have nothing to wait for, so probe first and bound the watch so a stuck check can't hang the run:
 
 ```bash
 if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
@@ -144,11 +152,11 @@ if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup -
 fi
 ```
 
-If the rollup is empty, there are no checks: treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue: the next run will pick it up once CI has settled. If a check fails, fix it and push again: do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is empty, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again, but do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
-If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title: then stop. Do **not** un-assign. The title rename is what later runs use to find your question and its answers (Step 1).
+If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title, then stop. Do **not** un-assign. The title rename is what later runs use to find your question and its answers (Step 1).
 
 ```bash
 gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
@@ -157,7 +165,7 @@ gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs In
 
 ### 5. Un-assign when done
 
-After completing work successfully, un-assign the issue: no other comments: then remove the worktree and its local branch (already pushed, so nothing is lost):
+After completing work successfully, un-assign the issue — no other comments — then remove the worktree and its local branch (already pushed, so nothing is lost):
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee="@me"
@@ -174,5 +182,5 @@ Then report the completed PR URL to the user:
 - Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
-- Keep commit messages concise to 100 characters max.
+- Keep commit messages to one concise line, following your global commit conventions.
 - Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"

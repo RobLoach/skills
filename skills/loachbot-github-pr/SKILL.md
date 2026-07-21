@@ -11,10 +11,18 @@ metadata:
 
 ## What it does
 
-1. Find the most-recently-updated open Draft Pull Request created by me and assigned to me
+1. Find the most-recently-updated open Draft Pull Request I authored
 2. Implement the work my review comments ask for, directly in the Pull Request
 3. Push the changes back to the Pull Request
 4. Mark the Pull Request as ready for review
+
+## Related skills
+
+Part of the LoachBot trio, chained together by self-assignment:
+
+- **`loachbot-github-planner`** files issues assigned to you.
+- **`loachbot-github-issue`** turns those issues into Pull Requests you authored. Review one, leave inline comments, then set it back to **Draft** to hand it off to this skill.
+- **`loachbot-github-pr`** (this skill) addresses the comments on your own draft Pull Requests and marks them ready for review again.
 
 ## Prerequisites
 
@@ -26,8 +34,8 @@ metadata:
 ### 1. Find a Pull Request
 
 ```bash
-# Open draft Pull Requests by myself, assigned to myself, newest activity first
-gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=10 \
+# Open draft Pull Requests I authored, newest activity first
+gh search prs --draft --author=@me --state=open --sort=updated --limit=10 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
@@ -139,14 +147,14 @@ Test where possible, then commit and push back to the PR: the branch already tra
 
 ```bash
 git add -A
-# Nothing staged means the addressed comments needed no code changes: skip the empty commit.
+# Nothing staged means the addressed comments needed no code changes, so skip the empty commit.
 if ! git diff --cached --quiet; then
     git commit -m "<concise message>"
     git push
 fi
 ```
 
-React with a 🚀 to each comment that was addressed, only once it has actually been handled: the change was pushed, or you verified no change is needed. A comment verified to need no code change still counts as addressed. The reaction is the persistent "already handled" marker Step 3 relies on, so never react before that point:
+React with a 🚀 to each comment that was addressed, only once it has actually been handled — the change was pushed, or you verified no change is needed. A comment verified to need no code change still counts as addressed. The reaction is the persistent "already handled" marker Step 3 relies on, so never react before that point:
 
 ```bash
 # Regular PR comment:
@@ -170,7 +178,7 @@ If the changes made deviate from what the original title or body described, upda
 
 ### 6. Verify CI before marking ready
 
-Repos without CI have nothing to wait for: probe first, then watch, bounded so a stuck check can't hang the run:
+Repos without CI have nothing to wait for, so probe first, then watch, bounded so a stuck check can't hang the run:
 
 ```bash
 if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
@@ -178,7 +186,7 @@ if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq 
 fi
 ```
 
-If the rollup is empty, there are no checks: treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready: it stays draft, and the next run will pick it up once CI has settled. If any check fails, do **not** mark the PR ready: report the failing checks to the user and stop.
+If the rollup is empty, there are no checks, so treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run will pick it up once CI has settled. If any check fails, do **not** mark the PR ready — report the failing checks to the user and stop.
 
 ### 7. Mark the Pull Request as ready
 
@@ -200,4 +208,4 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 - Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/reaction/ready steps.
 - Never post comments. React and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
-- Keep commit messages concise to 100 characters max.
+- Keep commit messages to one concise line, following your global commit conventions.

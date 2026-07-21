@@ -9,13 +9,23 @@ metadata:
 
 # LoachBot GitHub Planner
 
-Help the user turn a repository's goals into a concrete, prioritized plan of GitHub issues. Read the code, understand where the project is headed, then propose a sequenced plan: what to do, in what order, and why: and optionally file the approved issues.
+Help the user turn a repository's goals into a concrete, prioritized plan of GitHub issues. Read the code, understand where the project is headed, then propose a sequenced plan — what to do, in what order, and why — and optionally file the approved issues.
 
 ## What it does
 
 1. Read the repository and learn the project's goals
 2. Propose a prioritized, sequenced plan of GitHub issues
 3. File the issues the user approves, self-assigned
+
+## Related skills
+
+Part of the LoachBot trio, chained together by self-assignment:
+
+- **`loachbot-github-planner`** (this skill) files issues assigned to you.
+- **`loachbot-github-issue`** picks up those issues one at a time and opens a Pull Request you authored.
+- **`loachbot-github-pr`** addresses the review comments on your own draft Pull Requests.
+
+Filing issues with `--assignee @me` (Step 6) is what lets `loachbot-github-issue` find them, so keep that default unless the user asks otherwise.
 
 ## Prerequisites
 
@@ -81,7 +91,7 @@ Status: <where the project stands today. Active workstreams, recent releases, th
 
 ### 5. Build the plan
 
-Identify the work that moves the project toward its goals, then organize it into a plan: not a scattershot list. Aim for **3-10** issues drawn from these areas (skip any that don't apply):
+Identify the work that moves the project toward its goals, then organize it into a plan, not a scattershot list. Aim for **3-10** issues drawn from these areas (skip any that don't apply):
 
 - **Bugs**: real defects spotted in code, edge cases, broken paths
 - **Features**: gaps aligned with stated goals
@@ -115,7 +125,7 @@ For each planned issue, check it against the existing issues and open PRs from s
 - has the same fix or goal, even under a different title
 - is already merged or in a PR that would make it redundant
 
-Only keep issues with **no existing overlap**: when in doubt, drop it rather than file a near-duplicate.
+Only keep issues with **no existing overlap** — when in doubt, drop it rather than file a near-duplicate.
 
 ### 6. Present the plan and ask which to file
 
@@ -133,14 +143,14 @@ Do not leave context implicit or assume the reader has seen the planning session
 gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
 ```
 
-Only pass `--label` if the label already exists in the repo (`gh label list --repo <owner>/<repo>`). Omit it otherwise: labels can be added manually after filing. Likewise, only pass `--milestone` if the milestone already exists.
+Only pass `--label` if the label already exists in the repo (`gh label list --repo <owner>/<repo>`). Omit it otherwise — labels can be added manually after filing. Likewise, only pass `--milestone` if the milestone already exists.
 
 Report each created issue URL back to the user, in plan order. Leave the rest unfiled.
 
 ## Rules
 
-- Never push branches, open PRs, or modify the repo while planning: this skill is read-only against the codebase.
+- Never push branches, open PRs, or modify the repo while planning — this skill is read-only against the codebase.
 - Never file issues the user did not explicitly approve.
-- A plan is ordered and justified, not a pile of ideas: every issue carries a priority and a place in the sequence.
-- Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test): no generic items like "add more tests."
+- A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
+- Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."
 - Use subagents for the step-3 gathering; reserve the main thread for plan synthesis and the approve/file steps.
