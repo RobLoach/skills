@@ -69,7 +69,7 @@ Read enough to plan with real context. At minimum:
 - `gh pr list --repo <owner>/<repo> --limit 50 --state all`: work in-flight or recently merged (avoid duplicating)
 - `gh api repos/<owner>/<repo>/milestones --jq '.[].title'`: existing milestones to slot the plan into
 
-If your harness provides a code-exploration subagent (such as Claude Code's `Explore`), use it when the repo is large; otherwise read the key files directly.
+Fan these independent reads out across parallel subagents and plan from their summaries, keeping raw file contents out of the main thread. Use a code-exploration subagent (e.g. `Explore`) for large repos.
 
 ### 4. Establish goals and current state
 
@@ -143,3 +143,4 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas: every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test): no generic items like "add more tests."
+- Use subagents for the step-3 gathering; reserve the main thread for plan synthesis and the approve/file steps.

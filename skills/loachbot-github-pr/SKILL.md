@@ -129,9 +129,13 @@ AUTHOR=$(gh api user --jq '.login')
         --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
     ```
 
+Run the comment, inline-comment, and review-summary fetches in parallel. Use subagents for any codebase investigation a comment requires.
+
 ### 4. Do the work
 
-Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
+Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). Independent comments can be worked in parallel subagents. The main thread keeps the git/reaction/ready steps.
+
+Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
 
 ```bash
 git add -A
@@ -193,7 +197,7 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 
 ## Rules
 
-- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run: sequentially, never in parallel: and stop early when a run reports "Nothing to do".
+- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/reaction/ready steps.
 - Never post comments. React and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
 - Keep commit messages concise to 100 characters max.

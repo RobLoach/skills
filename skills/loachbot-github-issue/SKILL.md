@@ -76,6 +76,8 @@ Once you pick an issue, report its URL to the user immediately:
 - If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1: treat them as clarification for the question that was asked, not as new open-ended instructions.
 - Identify what work is needed from the issue body, the author's comments, and any clarification answers.
 
+Delegate codebase investigation to subagents rather than reading files into the main thread. Fan independent lookups out in parallel.
+
 ### 3. Do the work
 
 Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<owner>/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
@@ -117,6 +119,8 @@ Recovery paths:
 - If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists but no worktree has it, a previous completed run left it behind. Reattach it without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop: never keep working in a half-rebased worktree.
 - If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo: or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+
+For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
 Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
 
@@ -167,7 +171,7 @@ Then report the completed PR URL to the user:
 
 ## Rules
 
-- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run: sequentially, never in parallel: and stop early when a run reports "Nothing to do".
+- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Keep commit messages concise to 100 characters max.
