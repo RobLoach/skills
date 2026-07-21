@@ -76,7 +76,7 @@ Once you pick an issue, report its URL to the user immediately:
 - If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1: treat them as clarification for the question that was asked, not as new open-ended instructions.
 - Identify what work is needed from the issue body, the author's comments, and any clarification answers.
 
-To keep the main context focused on orchestrating the run, hand the codebase investigation to a subagent rather than reading large swaths of the repo into the main thread: have it locate the relevant files, trace the failing path, and report back a concise summary of what needs to change and where. When several independent things need looking up — the broken code path, its tests, related prior art — dispatch those lookups as parallel subagents in a single batch and act on their summaries.
+Delegate codebase investigation to subagents rather than reading files into the main thread. Fan independent lookups out in parallel.
 
 ### 3. Do the work
 
@@ -120,7 +120,7 @@ Recovery paths:
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop: never keep working in a half-rebased worktree.
 - If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo: or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
-For anything beyond a small edit, delegate the implementation to a subagent pointed at this worktree: tell it to `cd "$WT"`, make the change, run the tests, and report back a short summary plus the list of files it touched — keeping the bulk of file contents and test output out of the main context. The main thread stays responsible for the git, push, and PR steps below so the worktree invariant (Rules) is never in a subagent's hands.
+For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
 Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
 
@@ -171,8 +171,7 @@ Then report the completed PR URL to the user:
 
 ## Rules
 
-- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run: sequentially, never in parallel: and stop early when a run reports "Nothing to do". This "sequential, never in parallel" rule governs *which issues* you process — one at a time — not how you carry out a single fix.
-- Within a single run, lean on subagents to keep the main context clean: delegate context-heavy work — exploring the codebase, reading files, implementing the fix — to subagents, and fan independent read-only lookups out in parallel. Reserve the main thread for orchestration and the git/PR/un-assign steps that depend on the run's overall state.
+- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Keep commit messages concise to 100 characters max.
