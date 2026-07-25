@@ -11,7 +11,7 @@ metadata:
 
 ## What it does
 
-1. Find the most-recently-updated open Draft Pull Request I authored
+1. Find the most-recently-updated open Draft Pull Request I authored that's self-assigned
 2. Implement the work my review comments ask for, directly in the Pull Request
 3. Push the changes back to the Pull Request
 4. Mark the Pull Request as ready for review
@@ -34,8 +34,8 @@ Part of the LoachBot trio, chained together by self-assignment:
 ### 1. Find a Pull Request
 
 ```bash
-# Open draft Pull Requests I authored, newest activity first
-gh search prs --draft --author=@me --state=open --sort=updated --limit=10 \
+# Open draft Pull Requests I authored that's assigned to me, newest activity first
+gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=10 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
