@@ -34,8 +34,8 @@ Part of the LoachBot trio, chained together by self-assignment:
 ### 1. Find a Pull Request
 
 ```bash
-# Open draft Pull Requests I authored that's assigned to me, newest activity first
-gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=10 \
+# Open draft Pull Requests I authored that are assigned to me, newest activity first
+gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
@@ -51,11 +51,11 @@ For each PR (most-recently-updated first), decide whether it's actionable based 
         --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
     # Any regular or inline review comment newer than the rename?
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.created_at > \"$PARKED\") | .id"
+        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-        --jq ".[] | select(.created_at > \"$PARKED\") | .id"
+        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, path, body}"
     ```
-    If either query returns anything, remove the suffix (`gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"`) and proceed. Otherwise skip the PR.
+    If `$PARKED` is empty (no matching rename event — the suffix was likely added by hand), skip the PR and mention it to the user. If either query returns anything, the parked question has been answered — keep those answers for Steps 3-4 (they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them), remove the suffix (`gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"`) and proceed. Otherwise skip the PR.
 
 Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
 
@@ -89,6 +89,9 @@ if [ ! -d "$WT" ]; then
     git worktree add --detach "$WT"
 fi
 cd "$WT"
+# Discard uncommitted leftovers from any interrupted run - reactions are only added
+# after a successful push, so unhandled comments will simply be re-addressed.
+git reset --hard && git clean -fd
 
 # Check out the PR head into this worktree. `gh pr checkout` handles fork remotes.
 gh pr checkout <number>
@@ -113,12 +116,12 @@ AUTHOR=$(gh api user --jq '.login')
 - Fetch regular PR comments you authored. Use the REST endpoint: it returns the numeric `id` the reaction endpoints below require (`gh pr view --json comments` returns GraphQL node IDs, which do not work there):
     ```bash
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body}"
+        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body, rockets: .reactions.rocket}"
     ```
 - Fetch inline review comments you authored:
     ```bash
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, path, body}"
+        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, path, body, rockets: .reactions.rocket}"
     ```
 - Fetch review summaries you authored (the body written when submitting a review): they often carry the overall instructions the inline comments assume:
     ```bash
@@ -126,7 +129,7 @@ AUTHOR=$(gh api user --jq '.login')
         --jq ".[] | select(.user.login == \"$AUTHOR\" and .body != \"\") | {id, submitted_at, body}"
     ```
     Review bodies do not support reactions, so treat them as instructions and context for the run; the 🚀 tracking below applies only to regular and inline comments.
-- Skip any comment that already has a 🚀 reaction from you: it has already been acted upon:
+- Skip any comment that already has a 🚀 reaction from you: it has already been acted upon. The fetches above include the reaction rollup, so only comments with `rockets > 0` need this per-comment confirmation that the reaction is yours:
     ```bash
     # Regular PR comments:
     gh api "repos/<owner>/<repo>/issues/comments/<comment_id>/reactions" \
@@ -136,6 +139,7 @@ AUTHOR=$(gh api user --jq '.login')
     gh api "repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions" \
         --jq ".[] | select(.user.login == \"$AUTHOR\" and .content == \"rocket\")"
     ```
+- If you resumed a `(Needs Info)` PR, fold in the answers gathered in Step 1 as clarification for the comments they reply to — they may be authored by other users, so the `$AUTHOR` filters above won't surface them.
 
 Run the comment, inline-comment, and review-summary fetches in parallel. Use subagents for any codebase investigation a comment requires.
 
@@ -178,15 +182,21 @@ If the changes made deviate from what the original title or body described, upda
 
 ### 6. Verify CI before marking ready
 
-Repos without CI have nothing to wait for, so probe first, then watch, bounded so a stuck check can't hang the run:
+Repos without CI have nothing to wait for — but checks can take a few seconds to register after a push, so probe with retries before concluding there are none, and bound the watch so a stuck check can't hang the run:
 
 ```bash
-if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
+CHECKS=0
+for _ in 1 2 3; do
+    CHECKS=$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')
+    [ "$CHECKS" -gt 0 ] && break
+    sleep 20
+done
+if [ "$CHECKS" -gt 0 ]; then
     timeout 30m gh pr checks <number> --repo <owner>/<repo> --watch
 fi
 ```
 
-If the rollup is empty, there are no checks, so treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run will pick it up once CI has settled. If any check fails, do **not** mark the PR ready — report the failing checks to the user and stop.
+If the rollup is still empty after the retries, there are no checks, so treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever: append ` (Needs Info)` to the title (as in Step 4), report the failing checks and note that a comment on the PR will un-park it, then stop.
 
 ### 7. Mark the Pull Request as ready
 

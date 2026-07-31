@@ -34,7 +34,7 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 ```bash
 # Issues created by and assigned to me, newest activity first
-gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit=10 \
+gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
@@ -51,7 +51,7 @@ For each issue (most-recently-updated first), decide whether it's actionable bas
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
     ```
-    If this returns any comments, the question has been answered — keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
+    If `$PARKED` is empty (no matching rename event — the suffix was likely added by hand), skip the issue and mention it to the user. If the comment query returns any comments, the question has been answered — keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 
@@ -106,6 +106,8 @@ git fetch origin --prune
 WT=~/Projects/<owner>/<repo>.worktrees/issue-<number>
 if [ -d "$WT" ]; then
     cd "$WT"
+    # Discard leftovers from any interrupted run - completed work was pushed, so nothing is lost.
+    git reset --hard && git clean -fd
     git checkout fix/<issue-slug>
     git rebase "origin/$DEFAULT"
 else
@@ -118,15 +120,9 @@ git submodule update --init --recursive
 
 Recovery paths:
 
-- If the worktree has uncommitted changes on entry (`git status --porcelain` is non-empty), they are leftovers from an interrupted run of this same issue. The branch is deterministic and any completed work was pushed, so discard them and continue with the checkout/rebase as normal:
-    ```bash
-    git reset --hard
-    git clean -fd
-    ```
-- If `git worktree add` fails because the branch `fix/<issue-slug>` already exists in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry — do **not** force-reuse the branch across worktrees.
-- If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists but no worktree has it, a previous completed run left it behind. Reattach it without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
+- If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists: when another worktree has it checked out, remove that stale worktree (`git worktree remove <stale-path>`) and retry — do **not** force-reuse the branch across worktrees. When no worktree has it, reattach without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
-- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote`), then open the PR against the upstream repo. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push -u fork HEAD`), and open the PR against the upstream repo. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
@@ -144,15 +140,21 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for, so probe first and bound the watch so a stuck check can't hang the run:
+Then verify CI. Repos without CI have nothing to wait for — but checks can take a few seconds to register after a push, so probe with retries before concluding there are none, and bound the watch so a stuck check can't hang the run:
 
 ```bash
-if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
+CHECKS=0
+for _ in 1 2 3; do
+    CHECKS=$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')
+    [ "$CHECKS" -gt 0 ] && break
+    sleep 20
+done
+if [ "$CHECKS" -gt 0 ]; then
     timeout 30m gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
 fi
 ```
 
-If the rollup is empty, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again, but do **not** un-assign the issue while checks are red. If the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is still empty after the retries, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
