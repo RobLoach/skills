@@ -90,7 +90,7 @@ Delegate codebase investigation to subagents rather than reading files into the 
 
 Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<owner>/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
 
-The branch name is **deterministic** so the same issue always maps to the same branch across runs: `fix/<issue-slug>`, where `<issue-slug>` is `<number>-<kebab-title>`: the issue number, a hyphen, then the title lowercased with every run of non-alphanumeric characters collapsed to a single hyphen (e.g. issue #42 "Fix login redirect" → `fix/42-fix-login-redirect`). Truncate the title portion so the whole branch name stays under ~50 characters. Because the slug depends on the title, editing an issue's title mid-flight changes its branch name and breaks the re-run and recovery paths below, which assume a stable branch; leave in-flight titles alone (the `(Needs Info)` suffix is stripped before the slug is computed, so it doesn't affect the branch).
+The branch name is **deterministic** — `fix/issue-<number>` — so the same issue always maps to the same branch across runs, regardless of any title edits.
 
 ```bash
 # Ensure base clone exists (default branch only).
@@ -102,30 +102,26 @@ cd ~/Projects/<owner>/<repo>
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 git fetch origin --prune
 
-# Set up the dedicated worktree for this issue, branched fresh from the default branch.
+# Recreate the worktree from scratch each run: completed work is always pushed, so the
+# remote branch is the source of truth, and leftovers from interrupted runs are redone.
 WT=~/Projects/<owner>/<repo>.worktrees/issue-<number>
-if [ -d "$WT" ]; then
-    cd "$WT"
-    # Discard leftovers from any interrupted run - completed work was pushed, so nothing is lost.
-    git reset --hard && git clean -fd
-    git checkout fix/<issue-slug>
-    git rebase "origin/$DEFAULT"
-else
-    # Resume from the remote branch when an earlier run pushed one (e.g. the issue was
-    # re-assigned while its PR is still open); otherwise start fresh from the default branch.
-    START="origin/$DEFAULT"
-    git rev-parse --verify -q "origin/fix/<issue-slug>" >/dev/null && START="origin/fix/<issue-slug>"
-    git worktree add -b fix/<issue-slug> "$WT" "$START"
-    cd "$WT"
-    git rebase "origin/$DEFAULT"
-fi
+git worktree remove "$WT" --force 2>/dev/null
+git branch -D fix/issue-<number> 2>/dev/null
+
+# Resume from the remote branch when an earlier run pushed one (e.g. the issue was
+# re-assigned while its PR is still open); otherwise start fresh from the default branch.
+START="origin/$DEFAULT"
+git rev-parse --verify -q "origin/fix/issue-<number>" >/dev/null && START="origin/fix/issue-<number>"
+git worktree add -b fix/issue-<number> "$WT" "$START"
+cd "$WT"
+git rebase "origin/$DEFAULT"
 git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
 Recovery paths:
 
-- If `git worktree add -b` fails because the branch `fix/<issue-slug>` already exists: when another worktree has it checked out, remove that stale worktree (`git worktree remove <stale-path>`) and retry — do **not** force-reuse the branch across worktrees. When no worktree has it, reattach without `-b` (`git worktree add "$WT" fix/<issue-slug>`), then `cd "$WT"` and rebase onto `origin/$DEFAULT` as in the re-run path above.
+- If `git worktree add -b` fails because the branch `fix/issue-<number>` still exists, the `git branch -D` was blocked by a stale worktree at another path holding it checked out. Remove it (`git worktree remove <stale-path> --force`) and retry.
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
 - If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push -u fork HEAD`), and open the PR against the upstream repo. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
@@ -134,33 +130,28 @@ For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the c
 Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
 
 ```bash
-# First run creates the branch; when `origin/fix/<issue-slug>` already existed (any
+# First run creates the branch; when `origin/fix/issue-<number>` already existed (any
 # rebase happened above), use `git push --force-with-lease` instead.
 git push -u origin HEAD
 
 # A re-run may already have an open PR for this branch: only create one if none exists.
-PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/<issue-slug> --state open --json number --jq '.[0].number // ""')
+PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
 if [ -z "$PR_NUMBER" ]; then
     gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
     PR_NUMBER=$(gh pr view --json number --jq '.number')
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for — but checks can take a few seconds to register after a push, so probe with retries before concluding there are none, and bound the watch so a stuck check can't hang the run:
+Then verify CI. Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the watch so a stuck check can't hang the run:
 
 ```bash
-CHECKS=0
-for _ in 1 2 3; do
-    CHECKS=$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')
-    [ "$CHECKS" -gt 0 ] && break
-    sleep 20
-done
-if [ "$CHECKS" -gt 0 ]; then
+sleep 30
+if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
     timeout 30m gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
 fi
 ```
 
-If the rollup is still empty after the retries, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is empty after the pause, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
@@ -179,7 +170,7 @@ After completing work successfully, un-assign the issue — no other comments �
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee="@me"
 cd ~/Projects/<owner>/<repo>
 git worktree remove ~/Projects/<owner>/<repo>.worktrees/issue-<number> --force
-git branch -D fix/<issue-slug>
+git branch -D fix/issue-<number>
 ```
 
 Then report the completed PR URL to the user:
