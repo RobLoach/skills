@@ -111,8 +111,13 @@ if [ -d "$WT" ]; then
     git checkout fix/<issue-slug>
     git rebase "origin/$DEFAULT"
 else
-    git worktree add -b fix/<issue-slug> "$WT" "origin/$DEFAULT"
+    # Resume from the remote branch when an earlier run pushed one (e.g. the issue was
+    # re-assigned while its PR is still open); otherwise start fresh from the default branch.
+    START="origin/$DEFAULT"
+    git rev-parse --verify -q "origin/fix/<issue-slug>" >/dev/null && START="origin/fix/<issue-slug>"
+    git worktree add -b fix/<issue-slug> "$WT" "$START"
     cd "$WT"
+    git rebase "origin/$DEFAULT"
 fi
 git submodule sync --recursive
 git submodule update --init --recursive
@@ -129,7 +134,8 @@ For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the c
 Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
 
 ```bash
-# First run creates the branch; on a re-run after the rebase above, use `git push --force-with-lease` instead.
+# First run creates the branch; when `origin/fix/<issue-slug>` already existed (any
+# rebase happened above), use `git push --force-with-lease` instead.
 git push -u origin HEAD
 
 # A re-run may already have an open PR for this branch: only create one if none exists.

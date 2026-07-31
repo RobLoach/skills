@@ -82,6 +82,9 @@ The skills bake in a few defaults, feel free to change them to more closely matc
 **Why "Loachbot"?**
 : Your skills directory can get messy, so I've opted to namespace these as `loachbot` so that they're easy to find. Also allows explicit calling out when interacting with your coding agent.
 
+**Why does my issue/PR title end with "(Needs Info)"?**
+: A run hit something it couldn't resolve autonomously — an unclear task, or CI failures needing human judgment — so it parked the item and stopped. Reply with a comment (answering any question it posted); the next run sees your comment, restores the title, and resumes with your answer as context. Parked items are skipped until someone comments.
+
 ## License
 
 [MIT](LICENSE)
