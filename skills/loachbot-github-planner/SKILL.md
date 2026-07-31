@@ -52,19 +52,22 @@ Clone into `~/Projects/<owner>/<repo>` if missing, otherwise reset to the remote
 # Fresh clone:
 gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
 
-# Already cloned: sync to latest:
+# Already cloned: sync to latest — but never clobber local changes.
 cd ~/Projects/<owner>/<repo>
-DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-git fetch origin --prune
-git status --porcelain
-git checkout "$DEFAULT"
-git reset --hard "origin/$DEFAULT"
-git clean -fd
-git submodule sync --recursive
-git submodule update --init --recursive
+if [ -n "$(git status --porcelain)" ]; then
+    git status --short   # uncommitted local changes: report them to the user and STOP here
+else
+    DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
+    git fetch origin --prune
+    git checkout "$DEFAULT"
+    git reset --hard "origin/$DEFAULT"
+    git clean -fd
+    git submodule sync --recursive
+    git submodule update --init --recursive
+fi
 ```
 
-If `git status --porcelain` prints anything, the base clone has uncommitted local changes (notes, an experiment, a stash-in-progress). Do **not** run the checkout/reset/clean: report the dirty state to the user and stop, letting them decide what to do with the local changes.
+If the clone was dirty (notes, an experiment, a stash-in-progress), report the dirty state to the user and stop, letting them decide what to do with the local changes.
 
 ### 3. Get acquainted with the project
 
@@ -133,7 +136,7 @@ Present the plan as an ordered list of what you think is the most return-on-inve
 
 Before filing, make each approved issue self-contained: the body must include **all memory and content relevant to the issue**, so a reader needs no outside context. Fold in:
 
-- Relevant facts from any persistent memory or project notes your harness keeps that bear on the issue
+- Relevant facts from any persistent memory or project notes your harness keeps that bear on the issue — but only facts fit for a public issue tracker: no client or personal details, credentials, or internal URLs
 - Concrete grounding gathered in step 3: file paths and line references, code snippets, related commits, releases, and links to related issues or PRs
 - The priority, sequencing, and dependencies from the plan, plus the goals from step 4 that explain *why* this matters and *when* it should land; when a dependency was already filed earlier in this run, reference it by number (e.g. `Blocked by #12`)
 
