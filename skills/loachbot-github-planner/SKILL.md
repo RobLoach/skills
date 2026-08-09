@@ -32,6 +32,10 @@ Filing issues with `--assignee @me` (Step 6) is what lets `loachbot-github-issue
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable: the default location for clones; adjust if the user prefers another directory.
 
+## Conventions
+
+The `bash` blocks below are templates, not literals: substitute `<owner>` and `<repo>` before running them, and adapt anything that doesn't fit the repository in front of you.
+
 ## Workflow
 
 ### 1. Resolve the repository

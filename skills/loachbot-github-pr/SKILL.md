@@ -29,6 +29,12 @@ Part of the LoachBot trio, chained together by self-assignment:
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable: the default location for clones and worktrees; adjust if the user prefers another directory.
 
+## Conventions
+
+The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
+
+`needs-info-check.sh`, bundled next to this `SKILL.md`, decides whether a parked item has been answered (Step 1). It is a verbatim copy of the one in `loachbot-github-issue`, because each skill directory installs on its own — keep the copies identical.
+
 ## Workflow
 
 ### 1. Find a Pull Request
@@ -42,20 +48,17 @@ gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --
 
 If no items are found, report "Nothing to do" and stop.
 
-For each PR (most-recently-updated first), decide whether it's actionable based on the `(Needs Info)` title suffix:
+For each PR (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
 
-- Title does **not** end with `(Needs Info)` → actionable.
-- Title ends with `(Needs Info)` → a previous run parked it because every comment needed human judgment (Step 4). It becomes actionable again only once someone has commented since that rename:
+- Title does **not** end with ` (Needs Info)` → actionable.
+- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Ask the bundled script whether anyone has replied since:
     ```bash
-    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
-        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
-    # Any regular or inline review comment newer than the rename?
-    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
-    gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, path, body}"
+    bash <this skill's directory>/needs-info-check.sh <owner> <repo> <number>
     ```
-    If `$PARKED` is empty (no matching rename event — the suffix was likely added by hand), skip the PR and mention it to the user. If either query returns anything, the parked question has been answered — keep those answers for Steps 3-4 (they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them), remove the suffix (`gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"`) and proceed. Otherwise skip the PR.
+    It prints one verdict:
+    - `UNPARKED` → the question was answered, and the replies follow as JSON — regular and inline alike. Keep them for Steps 3-4; they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
+    - `PARKED` → nobody has replied yet. Skip the PR.
+    - `MANUAL-SUFFIX` → the suffix was added by hand, so there is no parking rename to measure replies against. Skip the PR and mention it to the user.
 
 Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
 
@@ -66,6 +69,12 @@ gh pr view <number> --repo <owner>/<repo> --json state,isDraft
 ```
 
 Proceed only if `state` is `OPEN` and `isDraft` is `true`; otherwise skip it and evaluate the next candidate.
+
+When the picked PR was parked, strip the suffix from its title before doing the work:
+
+```bash
+gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
+```
 
 Once you pick a PR, report its URL to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
@@ -161,9 +170,14 @@ gh api "repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions" \
     --method POST --field content="rocket"
 ```
 
-If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), park the PR so later runs skip it until someone replies: append ` (Needs Info)` to the title, report this to the user, and stop. Do not mark the PR as ready.
+Reactions, deliberately — not resolved review threads. Resolving was tried and reverted: it only reaches inline review threads, while regular PR comments and review summaries have no thread to resolve, so that half of the feedback would carry no "already handled" marker at all. A reaction works the same on both, and survives a force-push that can leave a thread stale.
+
+If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), park the PR so later runs skip it until someone replies: post one short question naming what you need, then append ` (Needs Info)` to the title. Report this to the user and stop. Do not mark the PR as ready.
+
+Comment first, rename second. The parking rename has to be the newest event you leave behind: Step 1 treats anything posted after it as the reply that un-parks the PR, so renaming first would make your own question un-park it immediately and loop forever.
 
 ```bash
+gh pr comment <number> --repo <owner>/<repo> --body "<one short question>"
 gh pr edit <number> --repo <owner>/<repo> --title "<original title> (Needs Info)"
 ```
 
@@ -171,16 +185,28 @@ Finally, if the changes made deviate from what the original PR title or body des
 
 ### 5. Verify CI before marking ready
 
-Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the watch so a stuck check can't hang the run:
+Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the wait so a stuck check can't hang the run:
 
 ```bash
 sleep 30
+CHECKS=0
 if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    timeout 30m gh pr checks <number> --repo <owner>/<repo> --watch
+    # Poll rather than `--watch`, so the 30-minute bound needs nothing but `sleep`.
+    # `gh pr checks` exits 8 while checks are pending, 0 once they all pass.
+    for _ in $(seq 30); do
+        gh pr checks <number> --repo <owner>/<repo>
+        CHECKS=$?
+        [ "$CHECKS" -eq 8 ] || break
+        sleep 60
+    done
 fi
 ```
 
-If the rollup is empty after the pause, there are no checks, so treat it as passing. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever: append ` (Needs Info)` to the title (as in Step 4), report the failing checks and note that a comment on the PR will un-park it, then stop.
+If the rollup is empty after the pause, there are no checks, so treat it as passing. Otherwise read the `CHECKS` the loop left behind:
+
+- `0` → checks passed; continue to Step 6.
+- `8` → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
+- anything else → a check failed. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
 
 ### 6. Mark the Pull Request as ready
 
@@ -200,6 +226,6 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 ## Rules
 
 - Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/reaction/ready steps.
-- Never post comments. React and rename only, as described above.
+- Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
 - Keep commit messages to one concise line, following your global commit conventions.

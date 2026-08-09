@@ -28,6 +28,12 @@ Part of the LoachBot trio, chained together by self-assignment:
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable: the default location for clones and worktrees; adjust if the user prefers another directory.
 
+## Conventions
+
+The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
+
+`needs-info-check.sh`, bundled next to this `SKILL.md`, decides whether a parked item has been answered (Step 1). It is a verbatim copy of the one in `loachbot-github-pr`, because each skill directory installs on its own — keep the copies identical.
+
 ## Workflow
 
 ### 1. Find one actionable issue
@@ -41,17 +47,17 @@ gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit
 
 If no items are found, report "Nothing to do" and stop.
 
-For each issue (most-recently-updated first), decide whether it's actionable based on the `(Needs Info)` title suffix:
+For each issue (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
 
-- Title does **not** end with `(Needs Info)` → actionable.
-- Title ends with `(Needs Info)` → a previous run asked a question and renamed the title (Step 4). It becomes actionable again only once someone has commented since that rename:
+- Title does **not** end with ` (Needs Info)` → actionable.
+- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Ask the bundled script whether anyone has replied since:
     ```bash
-    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
-        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
-    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.created_at > \"$PARKED\") | {author: .user.login, created_at, body}"
+    bash <this skill's directory>/needs-info-check.sh <owner> <repo> <number>
     ```
-    If `$PARKED` is empty (no matching rename event — the suffix was likely added by hand), skip the issue and mention it to the user. If the comment query returns any comments, the question has been answered — keep those answers for Step 2 and proceed. If it returns nothing, skip the issue.
+    It prints one verdict:
+    - `UNPARKED` → the question was answered, and the replies follow as JSON. Keep them for Step 2; the issue is actionable.
+    - `PARKED` → nobody has replied yet. Skip the issue.
+    - `MANUAL-SUFFIX` → the suffix was added by hand, so there is no parking rename to measure replies against. Skip the issue and mention it to the user.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 
@@ -63,7 +69,7 @@ gh api "repos/<owner>/<repo>/issues/<number>" --jq '{state, assignees: [.assigne
 
 If `state` is not `open`, or your login is not among the assignees, skip it and evaluate the next candidate.
 
-When resuming a `(Needs Info)` issue, remove the suffix from the title before doing the work:
+When the picked issue was parked, strip the suffix from its title before doing the work:
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
@@ -142,20 +148,34 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the watch so a stuck check can't hang the run:
+Then verify CI. Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the wait so a stuck check can't hang the run:
 
 ```bash
 sleep 30
+CHECKS=0
 if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    timeout 30m gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --watch
+    # Poll rather than `--watch`, so the 30-minute bound needs nothing but `sleep`.
+    # `gh pr checks` exits 8 while checks are pending, 0 once they all pass.
+    for _ in $(seq 30); do
+        gh pr checks "$PR_NUMBER" --repo <owner>/<repo>
+        CHECKS=$?
+        [ "$CHECKS" -eq 8 ] || break
+        sleep 60
+    done
 fi
 ```
 
-If the rollup is empty after the pause, there are no checks, so treat it as passing and continue. If the watch times out (exit code 124), report the still-pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run will pick it up once CI has settled. If a check fails, fix it and push again — at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If the rollup is empty after the pause, there are no checks, so treat it as passing and continue. Otherwise read the `CHECKS` the loop left behind:
+
+- `0` → checks passed; continue.
+- `8` → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
+- anything else → a check failed. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
 If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title, then stop. Do **not** un-assign. The title rename is what later runs use to find your question and its answers (Step 1).
+
+Comment first, rename second. The parking rename has to be the newest event you leave behind: Step 1 treats anything posted after it as the reply that un-parks the issue, so renaming first would make your own question un-park it immediately and loop forever.
 
 ```bash
 gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
@@ -167,7 +187,7 @@ gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs In
 After completing work successfully, un-assign the issue — no other comments — then remove the worktree and its local branch (already pushed, so nothing is lost):
 
 ```bash
-gh issue edit <number> --repo <owner>/<repo> --remove-assignee="@me"
+gh issue edit <number> --repo <owner>/<repo> --remove-assignee @me
 cd ~/Projects/<owner>/<repo>
 git worktree remove ~/Projects/<owner>/<repo>.worktrees/issue-<number> --force
 git branch -D fix/issue-<number>
