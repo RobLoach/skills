@@ -32,8 +32,6 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
-`needs-info-check.sh`, bundled next to this `SKILL.md`, decides whether a parked item has been answered (Step 1). It is a verbatim copy of the one in `loachbot-github-pr`, because each skill directory installs on its own — keep the copies identical.
-
 ## Workflow
 
 ### 1. Find one actionable issue
@@ -50,14 +48,23 @@ If no items are found, report "Nothing to do" and stop.
 For each issue (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
 
 - Title does **not** end with ` (Needs Info)` → actionable.
-- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Ask the bundled script whether anyone has replied since:
+- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Find that parking rename, then look for anything posted since:
     ```bash
-    bash <this skill's directory>/needs-info-check.sh <owner> <repo> <number>
+    # A parking run comments first and renames second, so the parking rename is the newest
+    # event it leaves behind. Take the most recent one: an issue can be parked, answered
+    # and re-parked any number of times.
+    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
+        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
+
+    # `export` so the filter below can read the timestamp as `env.PARKED`.
+    export PARKED
+    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
+        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}'
     ```
-    It prints one verdict:
-    - `UNPARKED` → the question was answered, and the replies follow as JSON. Keep them for Step 2; the issue is actionable.
-    - `PARKED` → nobody has replied yet. Skip the issue.
-    - `MANUAL-SUFFIX` → the suffix was added by hand, so there is no parking rename to measure replies against. Skip the issue and mention it to the user.
+    Three outcomes:
+    - `$PARKED` is empty → no parking rename exists, so the suffix was added by hand and there is nothing to measure replies against. Skip the issue and mention it to the user.
+    - Replies came back → the question was answered. Keep them for Step 2; the issue is actionable.
+    - No replies → nobody has answered yet. Skip the issue.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 

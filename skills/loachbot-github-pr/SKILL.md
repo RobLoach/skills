@@ -33,8 +33,6 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
-`needs-info-check.sh`, bundled next to this `SKILL.md`, decides whether a parked item has been answered (Step 1). It is a verbatim copy of the one in `loachbot-github-issue`, because each skill directory installs on its own — keep the copies identical.
-
 ## Workflow
 
 ### 1. Find a Pull Request
@@ -51,14 +49,25 @@ If no items are found, report "Nothing to do" and stop.
 For each PR (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
 
 - Title does **not** end with ` (Needs Info)` → actionable.
-- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Ask the bundled script whether anyone has replied since:
+- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Find that parking rename, then look for anything posted since — a reply can be a regular comment or an inline review comment:
     ```bash
-    bash <this skill's directory>/needs-info-check.sh <owner> <repo> <number>
+    # A parking run comments first and renames second, so the parking rename is the newest
+    # event it leaves behind. Take the most recent one: a PR can be parked, answered and
+    # re-parked any number of times.
+    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
+        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
+
+    # `export` so the filters below can read the timestamp as `env.PARKED`.
+    export PARKED
+    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
+        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}'
+    gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
+        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}'
     ```
-    It prints one verdict:
-    - `UNPARKED` → the question was answered, and the replies follow as JSON — regular and inline alike. Keep them for Steps 3-4; they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
-    - `PARKED` → nobody has replied yet. Skip the PR.
-    - `MANUAL-SUFFIX` → the suffix was added by hand, so there is no parking rename to measure replies against. Skip the PR and mention it to the user.
+    Three outcomes:
+    - `$PARKED` is empty → no parking rename exists, so the suffix was added by hand and there is nothing to measure replies against. Skip the PR and mention it to the user.
+    - Either query returned replies → the question was answered. Keep them for Steps 3-4; they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
+    - No replies → nobody has answered yet. Skip the PR.
 
 Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
 
