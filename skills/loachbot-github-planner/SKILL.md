@@ -88,13 +88,23 @@ Read enough to plan with real context. At minimum:
 
 Fan these independent reads out across parallel subagents and plan from their summaries, keeping raw file contents out of the main thread. Use a code-exploration subagent (e.g. `Explore`) for large repos.
 
+The issue and PR lists above are capped, so on a busy repository they show only the newest slice. Compare the cap against the real total:
+
+```bash
+gh api "search/issues?q=repo:<owner>/<repo>+is:issue&per_page=1" --jq '.total_count'
+```
+
+If the total exceeds what the list returned, treat the list as a sample rather than the full picture and say so when presenting the plan — Step 5 then has to search per candidate to catch the duplicates the sample missed.
+
 ### 4. Establish goals and current state
 
-Summarize for the user...
+Summarize for the user, in this shape:
 
+```
 Project: <title for the project>
 Goal: <description of what the project does>
 Status: <where the project stands today. Active workstreams, recent releases, the biggest gaps or risks between now and its goals>
+```
 
 ### 5. Build the plan
 
@@ -126,7 +136,15 @@ Body: <what's wrong or missing, with file references>
 <how we'd know it's done>
 ```
 
-For each planned issue, check it against the existing issues and open PRs from step 3. Drop it if any existing item:
+For each planned issue, check it against the existing issues and open PRs from step 3. When step 3 showed the lists were capped, search the repository per candidate as well, so a duplicate older than the sample still gets caught:
+
+```bash
+# Omit `--state`: it only accepts open|closed, and leaving it off searches both.
+gh search issues --repo <owner>/<repo> --limit 10 "<two or three keywords from the candidate>" \
+    --json number,title,state,url --jq '.[] | "#\(.number) [\(.state)] \(.title)"'
+```
+
+Drop the candidate if any existing item:
 
 - addresses the same root cause or code location
 - has the same fix or goal, even under a different title

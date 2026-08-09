@@ -129,18 +129,26 @@ Recovery paths:
 
 - If `git worktree add -b` fails because the branch `fix/issue-<number>` still exists, the `git branch -D` was blocked by a stale worktree at another path holding it checked out. Remove it (`git worktree remove <stale-path> --force`) and retry.
 - If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
-- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push -u fork HEAD`), and open the PR against the upstream repo. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head:
+    ```bash
+    gh pr create --repo <owner>/<repo> --head "$(gh api user --jq '.login'):fix/issue-<number>" \
+        --title "<title>" --body "<body>" --assignee @me
+    ```
+    The `<user>:<branch>` form of `--head` also tells `gh` the branch is already pushed, so it won't offer to fork a second time. It does not accept an organization as the user, so a fork living in an org needs its PR opened by hand. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
 Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
 
 ```bash
-# First run creates the branch; when `origin/fix/issue-<number>` already existed (any
-# rebase happened above), use `git push --force-with-lease` instead.
-git push -u origin HEAD
+# `--force-with-lease` covers both cases in one line: it creates the branch on a first
+# run, and replaces the remote history when the rebase above rewrote a resumed branch -
+# while still refusing the push if someone else moved the branch in the meantime.
+git push --force-with-lease -u origin HEAD
 
 # A re-run may already have an open PR for this branch: only create one if none exists.
+# Keep `--head` a bare branch name. It matches fork-based PRs too, whereas the
+# `<owner>:<branch>` form matches nothing here.
 PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
 if [ -z "$PR_NUMBER" ]; then
     gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
