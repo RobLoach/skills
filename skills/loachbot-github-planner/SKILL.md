@@ -36,6 +36,8 @@ Filing issues with `--assignee @me` (Step 6) is what lets `loachbot-github-issue
 
 The `bash` blocks below are templates, not literals: substitute `<owner>` and `<repo>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+
 ## Workflow
 
 ### 1. Resolve the repository
@@ -50,28 +52,14 @@ Do not proceed without one.
 
 ### 2. Get the latest code
 
-Clone into `~/Projects/<owner>/<repo>` if missing, otherwise reset to the remote default branch and pull.
+Clone into `~/Projects/<owner>/<repo>` if missing, otherwise reset to the remote default branch:
 
 ```bash
-# Fresh clone:
-gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
-
-# Already cloned: sync to latest — but never clobber local changes.
-cd ~/Projects/<owner>/<repo>
-if [ -n "$(git status --porcelain)" ]; then
-    git status --short   # uncommitted local changes: report them to the user and STOP here
-else
-    DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-    git fetch origin --prune
-    git checkout "$DEFAULT"
-    git reset --hard "origin/$DEFAULT"
-    git clean -fd
-    git submodule sync --recursive
-    git submodule update --init --recursive
-fi
+CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo> | tail -1)
+cd "$CLONE"
 ```
 
-If the clone was dirty (notes, an experiment, a stash-in-progress), report the dirty state to the user and stop, letting them decide what to do with the local changes.
+If it exits **5**, the clone has uncommitted local changes — notes, an experiment, a stash-in-progress. Report the dirty state it printed to the user and stop, letting them decide what to do with those changes. Never clobber them.
 
 ### 3. Get acquainted with the project
 

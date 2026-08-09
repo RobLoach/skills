@@ -32,6 +32,8 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes. `scripts/wait-for-checks.sh` is a verbatim copy of the one in `loachbot-github-pr`, because each skill directory installs on its own — keep the copies identical.
+
 ## Workflow
 
 ### 1. Find one actionable issue
@@ -90,9 +92,11 @@ Once you pick an issue, report its URL to the user immediately:
 - Read the full body: `gh api repos/<owner>/<repo>/issues/<number>`
 - Read the comments authored by the logged-in user: those are the instructions to trust:
     ```bash
+    # `export` so the filter can read the login as `env.AUTHOR`.
+    export AUTHOR
     AUTHOR=$(gh api user --jq '.login')
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body}"
+        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body}'
     ```
 - If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1: treat them as clarification for the question that was asked, not as new open-ended instructions.
 - Identify what work is needed from the issue body, the author's comments, and any clarification answers.
@@ -106,37 +110,17 @@ Each issue gets its own git worktree so branches can never bleed into each other
 The branch name is **deterministic** — `fix/issue-<number>` — so the same issue always maps to the same branch across runs, regardless of any title edits.
 
 ```bash
-# Ensure base clone exists (default branch only).
-if [ ! -d ~/Projects/<owner>/<repo> ]; then
-    gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
-fi
-
-cd ~/Projects/<owner>/<repo>
-DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-git fetch origin --prune
-
-# Recreate the worktree from scratch each run: completed work is always pushed, so the
-# remote branch is the source of truth, and leftovers from interrupted runs are redone.
-WT=~/Projects/<owner>/<repo>.worktrees/issue-<number>
-git worktree remove "$WT" --force 2>/dev/null
-git branch -D fix/issue-<number> 2>/dev/null
-
-# Resume from the remote branch when an earlier run pushed one (e.g. the issue was
-# re-assigned while its PR is still open); otherwise start fresh from the default branch.
-START="origin/$DEFAULT"
-git rev-parse --verify -q "origin/fix/issue-<number>" >/dev/null && START="origin/fix/issue-<number>"
-git worktree add -b fix/issue-<number> "$WT" "$START"
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
 cd "$WT"
-git rebase "origin/$DEFAULT"
-git submodule sync --recursive
-git submodule update --init --recursive
 ```
 
-Recovery paths:
+The script clones on first use, recreates the worktree from scratch, resumes from `origin/fix/issue-<number>` when an earlier run pushed one, rebases onto the default branch, and syncs submodules. Read its header for the details.
 
-- If `git worktree add -b` fails because the branch `fix/issue-<number>` still exists, the `git branch -D` was blocked by a stale worktree at another path holding it checked out. Remove it (`git worktree remove <stale-path> --force`) and retry.
-- If `git rebase` hits conflicts, run `git rebase --abort`, then handle it like Step 4 (comment + `(Needs Info)`) and stop — never keep working in a half-rebased worktree.
-- If `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head:
+Recovery paths, by exit code:
+
+- **4** — the branch is checked out by another worktree left behind by an earlier run. Remove it (`git worktree remove <stale-path> --force`) and run the script again.
+- **3** — the rebase conflicted and has already been aborted. Handle it like Step 4 (comment + `(Needs Info)`) and stop; never keep working in a half-rebased worktree.
+- If `git push` later fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head:
     ```bash
     gh pr create --repo <owner>/<repo> --head "$(gh api user --jq '.login'):fix/issue-<number>" \
         --title "<title>" --body "<body>" --assignee @me
@@ -163,28 +147,17 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the wait so a stuck check can't hang the run:
+Then verify CI. The script waits out the delay before checks register, treats a repo with no CI as passing, and bounds the wait at 30 minutes:
 
 ```bash
-sleep 30
-CHECKS=0
-if [ "$(gh pr view "$PR_NUMBER" --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    # Poll rather than `--watch`, so the 30-minute bound needs nothing but `sleep`.
-    # `gh pr checks` exits 8 while checks are pending, 0 once they all pass.
-    for _ in $(seq 30); do
-        gh pr checks "$PR_NUMBER" --repo <owner>/<repo>
-        CHECKS=$?
-        [ "$CHECKS" -eq 8 ] || break
-        sleep 60
-    done
-fi
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER"
 ```
 
-If the rollup is empty after the pause, there are no checks, so treat it as passing and continue. Otherwise read the `CHECKS` the loop left behind:
+Act on its exit code:
 
-- `0` → checks passed; continue.
-- `8` → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
-- anything else → a check failed. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- **0** → checks passed, or the repo has no CI. Continue.
+- **8** → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
+- **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 

@@ -103,6 +103,16 @@ The skills bake in a few defaults, so feel free to bend them to your own workflo
 
 The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
 
+## Development
+
+Every skill is checked on push and pull request by [`.github/workflows/validate.yml`](.github/workflows/validate.yml). Run the same checks locally before opening a Pull Request:
+
+```bash
+python3 .github/scripts/validate-skills.py
+```
+
+It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
+
 ## FAQ
 
 **Why "Loachbot"?**

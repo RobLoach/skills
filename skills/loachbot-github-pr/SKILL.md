@@ -33,6 +33,8 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes. `scripts/wait-for-checks.sh` is a verbatim copy of the one in `loachbot-github-issue`, because each skill directory installs on its own — keep the copies identical.
+
 ## Workflow
 
 ### 1. Find a Pull Request
@@ -93,40 +95,23 @@ Once you pick a PR, report its URL to the user immediately:
 Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<owner>/<repo>.worktrees/pr-<number>` and are deleted after the run is complete.
 
 ```bash
-# Ensure base clone exists (default branch only).
-if [ ! -d ~/Projects/<owner>/<repo> ]; then
-    gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
-fi
-
-cd ~/Projects/<owner>/<repo>
-git fetch origin --prune
-
-# Set up the dedicated worktree for this PR.
-WT=~/Projects/<owner>/<repo>.worktrees/pr-<number>
-if [ ! -d "$WT" ]; then
-    git worktree add --detach "$WT"
-fi
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
 cd "$WT"
-# Discard uncommitted leftovers from any interrupted run - reactions are only added
-# after a successful push, so unhandled comments will simply be re-addressed.
-git reset --hard && git clean -fd
-
-# Check out the PR head into this worktree. `gh pr checkout` handles fork remotes.
-gh pr checkout <number>
-git submodule sync --recursive
-git submodule update --init --recursive
 ```
 
-Recovery paths:
+The script clones on first use, discards uncommitted leftovers from an interrupted run, checks the PR head out with `gh pr checkout` (which resolves fork remotes), and syncs submodules. Read its header for the details.
 
-- If `gh pr checkout` reports the branch is checked out in another worktree, a previous run left it on a different path. Remove the stale worktree (`git worktree remove <stale-path>`) and retry: do **not** force-switch branches across worktrees.
-- If `gh pr checkout` fails for any other reason (e.g. the local branch diverged), stop and report: do not force through it.
+Recovery paths, by exit code:
+
+- **4** — the PR branch is checked out by another worktree left behind by an earlier run. Remove it (`git worktree remove <stale-path>`) and run the script again; do **not** force-switch branches across worktrees.
+- Any other non-zero — checkout failed, for instance because the local branch diverged. Stop and report; do not force through it.
 
 ### 3. Understand the Pull Request
 
-Determine your own login once, then reuse it for every filter:
+Determine your own login once, then reuse it for every filter. `export` it so the `--jq` filters below can read it as `env.AUTHOR`:
 
 ```bash
+export AUTHOR
 AUTHOR=$(gh api user --jq '.login')
 ```
 
@@ -134,17 +119,17 @@ AUTHOR=$(gh api user --jq '.login')
 - Fetch regular PR comments you authored. Use the REST endpoint: it returns the numeric `id` the reaction endpoints in Step 4 require (`gh pr view --json comments` returns GraphQL node IDs, which do not work there):
     ```bash
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, body, rockets: .reactions.rocket}"
+        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body, rockets: .reactions.rocket}'
     ```
 - Fetch inline review comments you authored:
     ```bash
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\") | {id, created_at, html_url, path, body, rockets: .reactions.rocket}"
+        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, path, body, rockets: .reactions.rocket}'
     ```
 - Fetch review summaries you authored (the body written when submitting a review): they often carry the overall instructions the inline comments assume:
     ```bash
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/reviews" \
-        --jq ".[] | select(.user.login == \"$AUTHOR\" and .body != \"\") | {id, submitted_at, body}"
+        --jq '.[] | select(.user.login == env.AUTHOR and .body != "") | {id, submitted_at, body}'
     ```
     Review bodies do not support reactions, so treat them as instructions and context for the run; the 🚀 tracking below applies only to regular and inline comments.
 - Skip any comment with `rockets > 0` in the fetches above: a 🚀 reaction marks it as already acted upon (Step 4 adds it only once the work is handled).
@@ -194,28 +179,17 @@ Finally, if the changes made deviate from what the original PR title or body des
 
 ### 5. Verify CI before marking ready
 
-Repos without CI have nothing to wait for — but checks take a moment to register after a push, so pause before probing, and bound the wait so a stuck check can't hang the run:
+The script waits out the delay before checks register, treats a repo with no CI as passing, and bounds the wait at 30 minutes:
 
 ```bash
-sleep 30
-CHECKS=0
-if [ "$(gh pr view <number> --repo <owner>/<repo> --json statusCheckRollup --jq '.statusCheckRollup | length')" -gt 0 ]; then
-    # Poll rather than `--watch`, so the 30-minute bound needs nothing but `sleep`.
-    # `gh pr checks` exits 8 while checks are pending, 0 once they all pass.
-    for _ in $(seq 30); do
-        gh pr checks <number> --repo <owner>/<repo>
-        CHECKS=$?
-        [ "$CHECKS" -eq 8 ] || break
-        sleep 60
-    done
-fi
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 ```
 
-If the rollup is empty after the pause, there are no checks, so treat it as passing. Otherwise read the `CHECKS` the loop left behind:
+Act on its exit code:
 
-- `0` → checks passed; continue to Step 6.
-- `8` → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
-- anything else → a check failed. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
+- **0** → checks passed, or the repo has no CI. Continue to Step 6.
+- **8** → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
+- **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
 
 ### 6. Mark the Pull Request as ready
 
