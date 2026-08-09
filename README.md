@@ -8,6 +8,24 @@ A collection of AI agent skills focused on developing and maintaining open-sourc
 - [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
 - [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
 
+## The loop
+
+The three skills chain together through GitHub itself — self-assignment is the handoff, and you are the review step in the middle:
+
+```
+Planner       files the issues you approve, assigned to you
+                  │
+Issue Fixer       picks one up, opens a Pull Request, assigned to you
+                  │
+You               review it, leave inline comments, set it back to Draft
+                  │
+PR Fixer          addresses the comments, marks it ready for review
+                  │
+You               merge it
+```
+
+Nothing moves without you: the Planner files only the issues you approve, and a Pull Request only reaches the PR Fixer once you have reviewed it and set it back to **Draft**. Merging is always yours.
+
 ## Installation
 
 1. Ensure you have the dependencies available:
@@ -15,12 +33,17 @@ A collection of AI agent skills focused on developing and maintaining open-sourc
    - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
    - `git`
 
-2. Download the folders into `~/.claude/skills`, or use your favourite SKILL installation method, like `gh`:
+2. Install all three skills with `gh`:
    ```bash
-   gh skills install robloach/skills --scope user
+   gh skills install robloach/skills --scope user --agent claude-code --all
    ```
+   `--all` takes all three without prompting, and `--scope user` makes them available in every project rather than just the current one. Swap `--agent` for whichever agent you use — `gh skills install --help` lists the supported values, including `opencode`, `codex`, `cursor` and `github-copilot`.
+
+   Or install by hand: copy each `skills/<name>/` folder — `SKILL.md` and the files beside it — into your agent's skills directory, such as `~/.claude/skills/`.
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
+
+Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr` — on agents that support them.
 
 ## Skills
 
@@ -54,10 +77,11 @@ LoachBot Issue fixes until there aren't any more left
 
 Finds your draft Pull Requests, addresses your reviewed inline comments in a dedicated worktree, reacts with 🚀 to each comment that was handled, verifies that the CI passes, then marks the PR back to ready for review.
 
+A Pull Request has to be **open**, a **draft**, **authored by you** and **assigned to you** to be picked up. The Issue Fixer self-assigns the PRs it opens, so the handoff works on its own — but a Pull Request you opened by hand stays invisible until you assign it to yourself.
+
 **Examples:**
 
 ```
-/loachbot-github-pr
 Run LoachBot Pull Requests
 Address the feedback on my recent pull request
 Run LoachBot Pull Requests until there aren't any left
@@ -72,18 +96,36 @@ gh skills update --all
 
 ## Customization
 
-The skills bake in a few defaults, feel free to change them to more closely match your workflow, either by editing `SKILL.md` directly, or asking it to remember your own workflows...
+The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone Location**: Repositories and worktrees default to `~/Projects/<owner>/<repo>`
-- **Commit Style**: Rely on your global settings for commit messages and attribution
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>`, and each issue or Pull Request gets a throwaway worktree beside it in `~/Projects/<owner>/<repo>.worktrees/`, removed once the run finishes
+- **Commit style**: inherited from your global settings, for both commit messages and attribution
+
+The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
+
+## Development
+
+Every skill is checked on push and pull request by [`.github/workflows/validate.yml`](.github/workflows/validate.yml). Run the same checks locally before opening a Pull Request:
+
+```bash
+python3 .github/scripts/validate-skills.py
+```
+
+It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
 
 ## FAQ
 
 **Why "Loachbot"?**
-: Your skills directory can get messy, so I've opted to namespace these as `loachbot` so that they're easy to find. Also allows explicit calling out when interacting with your coding agent.
+
+Your skills directory can get messy, so I've opted to namespace these as `loachbot` so that they're easy to find. Also allows explicit calling out when interacting with your coding agent.
 
 **Why does my issue/PR title end with "(Needs Info)"?**
-: A run hit something it couldn't resolve autonomously — an unclear task, or CI failures needing human judgment — so it parked the item and stopped. Reply with a comment (answering any question it posted); the next run sees your comment, restores the title, and resumes with your answer as context. Parked items are skipped until someone comments.
+
+A run hit something it couldn't resolve autonomously — an unclear task, or CI failures needing human judgment — so it parked the item and stopped. It posts a comment saying what it needs before parking, so start there. Reply with a comment answering it; the next run sees your reply, restores the title, and resumes with your answer as context. Parked items are skipped until someone replies.
+
+**Why does it react with 🚀 instead of resolving my review comments?**
+
+A reaction works on every kind of feedback. Resolving only applies to inline review threads, so regular Pull Request comments and review summaries would end up with no "already handled" marker at all, and the next run would redo them. Reactions also survive a force-push that can leave a resolved thread stale.
 
 ## License
 

@@ -32,6 +32,12 @@ Filing issues with `--assignee @me` (Step 6) is what lets `loachbot-github-issue
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` exists and is writable: the default location for clones; adjust if the user prefers another directory.
 
+## Conventions
+
+The `bash` blocks below are templates, not literals: substitute `<owner>` and `<repo>` before running them, and adapt anything that doesn't fit the repository in front of you.
+
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+
 ## Workflow
 
 ### 1. Resolve the repository
@@ -46,28 +52,14 @@ Do not proceed without one.
 
 ### 2. Get the latest code
 
-Clone into `~/Projects/<owner>/<repo>` if missing, otherwise reset to the remote default branch and pull.
+Clone into `~/Projects/<owner>/<repo>` if missing, otherwise reset to the remote default branch:
 
 ```bash
-# Fresh clone:
-gh repo clone <owner>/<repo> ~/Projects/<owner>/<repo> -- --recurse-submodules
-
-# Already cloned: sync to latest — but never clobber local changes.
-cd ~/Projects/<owner>/<repo>
-if [ -n "$(git status --porcelain)" ]; then
-    git status --short   # uncommitted local changes: report them to the user and STOP here
-else
-    DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-    git fetch origin --prune
-    git checkout "$DEFAULT"
-    git reset --hard "origin/$DEFAULT"
-    git clean -fd
-    git submodule sync --recursive
-    git submodule update --init --recursive
-fi
+CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo> | tail -1)
+cd "$CLONE"
 ```
 
-If the clone was dirty (notes, an experiment, a stash-in-progress), report the dirty state to the user and stop, letting them decide what to do with the local changes.
+If it exits **5**, the clone has uncommitted local changes — notes, an experiment, a stash-in-progress. Report the dirty state it printed to the user and stop, letting them decide what to do with those changes. Never clobber them.
 
 ### 3. Get acquainted with the project
 
@@ -84,13 +76,23 @@ Read enough to plan with real context. At minimum:
 
 Fan these independent reads out across parallel subagents and plan from their summaries, keeping raw file contents out of the main thread. Use a code-exploration subagent (e.g. `Explore`) for large repos.
 
+The issue and PR lists above are capped, so on a busy repository they show only the newest slice. Compare the cap against the real total:
+
+```bash
+gh api "search/issues?q=repo:<owner>/<repo>+is:issue&per_page=1" --jq '.total_count'
+```
+
+If the total exceeds what the list returned, treat the list as a sample rather than the full picture and say so when presenting the plan — Step 5 then has to search per candidate to catch the duplicates the sample missed.
+
 ### 4. Establish goals and current state
 
-Summarize for the user...
+Summarize for the user, in this shape:
 
+```
 Project: <title for the project>
 Goal: <description of what the project does>
 Status: <where the project stands today. Active workstreams, recent releases, the biggest gaps or risks between now and its goals>
+```
 
 ### 5. Build the plan
 
@@ -122,7 +124,15 @@ Body: <what's wrong or missing, with file references>
 <how we'd know it's done>
 ```
 
-For each planned issue, check it against the existing issues and open PRs from step 3. Drop it if any existing item:
+For each planned issue, check it against the existing issues and open PRs from step 3. When step 3 showed the lists were capped, search the repository per candidate as well, so a duplicate older than the sample still gets caught:
+
+```bash
+# Omit `--state`: it only accepts open|closed, and leaving it off searches both.
+gh search issues --repo <owner>/<repo> --limit 10 "<two or three keywords from the candidate>" \
+    --json number,title,state,url --jq '.[] | "#\(.number) [\(.state)] \(.title)"'
+```
+
+Drop the candidate if any existing item:
 
 - addresses the same root cause or code location
 - has the same fix or goal, even under a different title
