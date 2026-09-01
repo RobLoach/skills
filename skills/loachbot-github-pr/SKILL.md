@@ -39,8 +39,15 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 
 ### 1. Find a Pull Request
 
+The search spans every repository by default. Scope it first, in this order:
+
+1. A repo named in the prompt or skill arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
+2. Otherwise, if the user asked to work "on this project" and the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`, and add `--repo` for that.
+3. Otherwise search account-wide, as below.
+
 ```bash
-# Open draft Pull Requests I authored that are assigned to me, newest activity first
+# Open draft Pull Requests I authored that are assigned to me, newest activity first.
+# Add `--repo <owner>/<repo>` when the run is scoped to one repository.
 gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
@@ -132,7 +139,7 @@ AUTHOR=$(gh api user --jq '.login')
         --jq '.[] | select(.user.login == env.AUTHOR and .body != "") | {id, submitted_at, body}'
     ```
     Review bodies do not support reactions, so treat them as instructions and context for the run; the 🚀 tracking below applies only to regular and inline comments.
-- Skip any comment with `rockets > 0` in the fetches above: a 🚀 reaction marks it as already acted upon (Step 4 adds it only once the work is handled).
+- Skip any comment with `rockets > 0` in the fetches above: a 🚀 reaction marks it as already acted upon (Step 4 adds it only once the work is handled). The count cannot distinguish your own reaction from LoachBot's — both run under the same account — so 🚀 is reserved for this marker; if the user has been using it as ordinary emphasis, say so rather than silently skipping their comments.
 - If you resumed a `(Needs Info)` PR, fold in the answers gathered in Step 1 as clarification for the comments they reply to — they may be authored by other users, so the `$AUTHOR` filters above won't surface them.
 
 Run the comment, inline-comment, and review-summary fetches in parallel. Use subagents for any codebase investigation a comment requires.
@@ -179,7 +186,7 @@ Finally, if the changes made deviate from what the original PR title or body des
 
 ### 5. Verify CI before marking ready
 
-The script waits out the delay before checks register, treats a repo with no CI as passing, and bounds the wait at 30 minutes:
+The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
 
 ```bash
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
@@ -188,7 +195,8 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 Act on its exit code:
 
 - **0** → checks passed, or the repo has no CI. Continue to Step 6.
-- **8** → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
+- **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
+- **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without marking the PR ready.
 - **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
 
 ### 6. Mark the Pull Request as ready
@@ -211,4 +219,5 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 - Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/reaction/ready steps.
 - Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
+- Only one LoachBot skill at a time may run against a given repository. All three share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another.
 - Keep commit messages to one concise line, following your global commit conventions.

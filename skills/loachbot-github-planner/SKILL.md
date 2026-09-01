@@ -59,7 +59,7 @@ CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo> | tai
 cd "$CLONE"
 ```
 
-If it exits **5**, the clone has uncommitted local changes — notes, an experiment, a stash-in-progress. Report the dirty state it printed to the user and stop, letting them decide what to do with those changes. Never clobber them.
+If it exits **5**, the clone holds local work — uncommitted changes, or commits that the remote default branch does not have. Either way it's notes, an experiment or a stash-in-progress. Report what the script printed to the user and stop, letting them decide what to do with it. Never clobber it: `~/Projects/<owner>/<repo>` may well be the user's own working clone rather than a scratch one.
 
 ### 3. Get acquainted with the project
 
@@ -163,6 +163,7 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 ## Rules
 
 - Never push branches, open PRs, or modify the repo while planning — this skill is read-only against the codebase.
+- Only one LoachBot skill at a time may run against a given repository. Step 2 resets the base clone at `~/Projects/<owner>/<repo>`, which the two fixer skills build their worktrees from, so a concurrent run there would be pulled out from under them. If the user asks for overlapping runs, do them one after another.
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."

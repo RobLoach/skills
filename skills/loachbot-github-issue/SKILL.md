@@ -38,8 +38,15 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 
 ### 1. Find one actionable issue
 
+The search spans every repository by default. Scope it first, in this order:
+
+1. A repo named in the prompt or skill arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
+2. Otherwise, if the user asked to work "on this project" and the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`, and add `--repo` for that.
+3. Otherwise search account-wide, as below.
+
 ```bash
-# Issues created by and assigned to me, newest activity first
+# Issues created by and assigned to me, newest activity first.
+# Add `--repo <owner>/<repo>` when the run is scoped to one repository.
 gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
@@ -129,7 +136,20 @@ Recovery paths, by exit code:
 
 For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
-Implement the fix, test where possible, then push and make sure a PR exists (still inside `$WT`):
+Implement the fix, test where possible, then commit (still inside `$WT`):
+
+```bash
+git add -A
+if git diff --cached --quiet; then
+    echo "nothing staged: no code change was needed"
+else
+    git commit -m "<concise message>"
+fi
+```
+
+If nothing was staged, the issue needed no code change — it was already fixed, or it turned out to be a question rather than a defect. Do not open an empty Pull Request: `gh pr create` rejects a branch with no commits anyway. Handle it like Step 4 instead (a comment saying what you found, then ` (Needs Info)`) and stop, so a human decides whether to close the issue.
+
+Then push and make sure a PR exists:
 
 ```bash
 # `--force-with-lease` covers both cases in one line: it creates the branch on a first
@@ -147,7 +167,7 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-Then verify CI. The script waits out the delay before checks register, treats a repo with no CI as passing, and bounds the wait at 30 minutes:
+Then verify CI. The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
 
 ```bash
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER"
@@ -156,7 +176,8 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUM
 Act on its exit code:
 
 - **0** → checks passed, or the repo has no CI. Continue.
-- **8** → still pending after the full 30 minutes. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
+- **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
+- **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without un-assigning the issue.
 - **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
@@ -189,5 +210,6 @@ Then report the completed PR URL to the user:
 - Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
+- Only one LoachBot skill at a time may run against a given repository. All three share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another.
 - Keep commit messages to one concise line, following your global commit conventions.
 - Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"

@@ -98,7 +98,7 @@ gh skills update --all
 
 The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone location**: base clones go in `~/Projects/<owner>/<repo>`, and each issue or Pull Request gets a throwaway worktree beside it in `~/Projects/<owner>/<repo>.worktrees/`, removed once the run finishes
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>`, and each issue or Pull Request gets a throwaway worktree beside it in `~/Projects/<owner>/<repo>.worktrees/`, removed once the run finishes. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch.
 - **Commit style**: inherited from your global settings, for both commit messages and attribution
 
 The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
@@ -126,6 +126,12 @@ A run hit something it couldn't resolve autonomously — an unclear task, or CI 
 **Why does it react with 🚀 instead of resolving my review comments?**
 
 A reaction works on every kind of feedback. Resolving only applies to inline review threads, so regular Pull Request comments and review summaries would end up with no "already handled" marker at all, and the next run would redo them. Reactions also survive a force-push that can leave a resolved thread stale.
+
+One consequence: 🚀 is reserved. LoachBot runs as you, so it cannot tell its own reaction from one you added yourself — a 🚀 you leave on your own review comment hides that comment from every later run. Use any other emoji for emphasis.
+
+**Can I point it at a single repository?**
+
+Yes — name the repo and both fixers scope their search to it, e.g. "run LoachBot Issues on RobLoach/skills". Asking from inside a checkout ("fix the next issue on this project") works too. With no repo named, they search your whole account.
 
 ## License
 

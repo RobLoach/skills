@@ -17,7 +17,6 @@ Run from the repository root. Exits 1 if anything failed.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -168,9 +167,26 @@ def check_shared_scripts(skill_dirs: list[Path]) -> None:
                 fail(other, f"differs from {first}; SHARED copies of {name} must match")
 
 
+def shellcheck_usable() -> bool:
+    """Finding `shellcheck` on PATH is not enough to know it runs.
+
+    A version-manager shim (mise, asdf) resolves fine and then fails at invocation
+    with its own error, which would otherwise be reported as a bogus shellcheck
+    finding against the scripts. CI installs the real thing and asserts it separately,
+    so skipping here only ever affects a laptop.
+    """
+    try:
+        probe = subprocess.run(
+            ["shellcheck", "--version"], capture_output=True, text=True
+        )
+    except OSError:
+        return False
+    return probe.returncode == 0
+
+
 def run_shellcheck(skill_dirs: list[Path]) -> None:
-    if not shutil.which("shellcheck"):
-        print("note: shellcheck not installed, skipping that check", file=sys.stderr)
+    if not shellcheck_usable():
+        print("note: shellcheck not usable here, skipping that check", file=sys.stderr)
         return
     scripts = sorted(
         str(p) for skill_dir in skill_dirs for p in (skill_dir / "scripts").glob("*.sh")
