@@ -9,21 +9,6 @@ metadata:
 
 # LoachBot GitHub Pull Request Fixer
 
-## What it does
-
-1. Find the most-recently-updated open Draft Pull Request I authored that's self-assigned
-2. Implement the work my review comments ask for, directly in the Pull Request
-3. Push the changes back to the Pull Request
-4. Mark the Pull Request as ready for review
-
-## Related skills
-
-Part of the LoachBot trio, chained together by self-assignment:
-
-- **`loachbot-github-planner`** files issues assigned to you.
-- **`loachbot-github-issue`** turns those issues into Pull Requests you authored. Review one, leave inline comments, then set it back to **Draft** to hand it off to this skill.
-- **`loachbot-github-pr`** (this skill) addresses the comments on your own draft Pull Requests and marks them ready for review again.
-
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
@@ -33,7 +18,7 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes. `scripts/wait-for-checks.sh` is a verbatim copy of the one in `loachbot-github-issue`, because each skill directory installs on its own — keep the copies identical.
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
 ## Workflow
 
@@ -170,8 +155,6 @@ gh api "repos/<owner>/<repo>/issues/comments/<comment_id>/reactions" \
 gh api "repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions" \
     --method POST --field content="rocket"
 ```
-
-Reactions, deliberately — not resolved review threads. Resolving was tried and reverted: it only reaches inline review threads, while regular PR comments and review summaries have no thread to resolve, so that half of the feedback would carry no "already handled" marker at all. A reaction works the same on both, and survives a force-push that can leave a thread stale.
 
 If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), park the PR so later runs skip it until someone replies: post one short question naming what you need, then append ` (Needs Info)` to the title. Report this to the user and stop. Do not mark the PR as ready.
 

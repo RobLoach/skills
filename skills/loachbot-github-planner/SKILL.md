@@ -9,24 +9,6 @@ metadata:
 
 # LoachBot GitHub Planner
 
-Help the user turn a repository's goals into a concrete, prioritized plan of GitHub issues. Read the code, understand where the project is headed, then propose a sequenced plan — what to do, in what order, and why — and optionally file the approved issues.
-
-## What it does
-
-1. Read the repository and learn the project's goals
-2. Propose a prioritized, sequenced plan of GitHub issues
-3. File the issues the user approves, self-assigned
-
-## Related skills
-
-Part of the LoachBot trio, chained together by self-assignment:
-
-- **`loachbot-github-planner`** (this skill) files issues assigned to you.
-- **`loachbot-github-issue`** picks up those issues one at a time and opens a Pull Request you authored.
-- **`loachbot-github-pr`** addresses the review comments on your own draft Pull Requests.
-
-Filing issues with `--assignee @me` (Step 6) is what lets `loachbot-github-issue` find them, so keep that default unless the user asks otherwise.
-
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.

@@ -9,20 +9,6 @@ metadata:
 
 # LoachBot GitHub Issue Fixer
 
-## What it does
-
-1. Find the single most-recently-updated GitHub issue created by me and assigned to me
-2. Implement the required work in a Pull Request
-3. Un-assign the issue silently (no comments)
-
-## Related skills
-
-Part of the LoachBot trio, chained together by self-assignment:
-
-- **`loachbot-github-planner`** files issues assigned to you, which feed this skill.
-- **`loachbot-github-issue`** (this skill) picks up those issues and opens a Pull Request you authored, assigned to you.
-- **`loachbot-github-pr`** takes over once you review that Pull Request, leave inline comments, and set it back to **Draft**.
-
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
@@ -32,7 +18,7 @@ Part of the LoachBot trio, chained together by self-assignment:
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes. `scripts/wait-for-checks.sh` is a verbatim copy of the one in `loachbot-github-pr`, because each skill directory installs on its own — keep the copies identical.
+The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
 ## Workflow
 
