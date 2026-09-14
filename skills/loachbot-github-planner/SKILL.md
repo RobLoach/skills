@@ -12,7 +12,7 @@ metadata:
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` exists and is writable: the default location for clones; adjust if the user prefers another directory.
+- `~/Projects` is where clones go by default. It is created if missing, so change it only if the user prefers another directory.
 
 ## Conventions
 
@@ -144,7 +144,7 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 
 ## Rules
 
-- Never push branches, open PRs, or modify the repo while planning — this skill is read-only against the codebase.
+- Never push branches, open PRs, or edit the project's code while planning. Step 2 resets the clone to the remote default branch; nothing beyond that is written, and nothing is written to the remote.
 - Only one LoachBot skill at a time may run against a given repository. Step 2 resets the base clone at `~/Projects/<owner>/<repo>`, which the two fixer skills build their worktrees from, so a concurrent run there would be pulled out from under them. If the user asks for overlapping runs, do them one after another.
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.

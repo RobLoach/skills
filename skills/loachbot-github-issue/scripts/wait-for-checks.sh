@@ -18,7 +18,11 @@
 # one outcome this script exists to prevent.
 #
 # Polls rather than using `gh pr checks --watch`, so bounding the wait needs nothing
-# but `sleep` - no GNU `timeout`, which is absent on stock macOS.
+# but `sleep` - no GNU `timeout`, which is absent on stock macOS. Only the settled
+# result is printed: echoing every poll would bury the caller in repeat tables.
+#
+# ATTEMPTS, INTERVAL and EMPTY_PROBES can be overridden from the environment to
+# shorten the wait; the defaults below bound it at roughly 30 minutes.
 #
 # Exit codes:
 #   0  Checks passed, or the repository has no CI at all.
@@ -45,13 +49,19 @@ INTERVAL=${INTERVAL:-60}
 # rather than "the workflow has not appeared yet".
 EMPTY_PROBES=${EMPTY_PROBES:-3}
 
+# A per-run temp file: two runs against different repositories may overlap, and a
+# fixed /tmp path would have them reading each other's stderr - or collide outright
+# with a file another user owns.
+ERR=$(mktemp)
+trap 'rm -f "$ERR"' EXIT
+
 sleep 30
 
 SEEN_CHECKS=0
 for PROBE in $(seq "$EMPTY_PROBES"); do
     if ! ROLLUP=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" \
-        --json statusCheckRollup --jq '.statusCheckRollup | length' 2>/tmp/loachbot-rollup-err); then
-        cat /tmp/loachbot-rollup-err >&2
+        --json statusCheckRollup --jq '.statusCheckRollup | length' 2>"$ERR"); then
+        cat "$ERR" >&2
         echo "could not read the status check rollup; not treating that as passing" >&2
         exit 7
     fi
@@ -84,12 +94,14 @@ if [ "$SEEN_CHECKS" -eq 0 ]; then
 fi
 
 STATUS=8
+OUTPUT=
 for _ in $(seq "$ATTEMPTS"); do
-    gh pr checks "$NUMBER" --repo "$OWNER/$REPO"
+    OUTPUT=$(gh pr checks "$NUMBER" --repo "$OWNER/$REPO" 2>&1)
     STATUS=$?
     # 8 means still pending; anything else is a final verdict.
     [ "$STATUS" -eq 8 ] || break
     sleep "$INTERVAL"
 done
 
+printf '%s\n' "$OUTPUT"
 exit "$STATUS"

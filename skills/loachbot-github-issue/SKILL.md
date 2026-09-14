@@ -12,7 +12,7 @@ metadata:
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` exists and is writable: the default location for clones and worktrees; adjust if the user prefers another directory.
+- `~/Projects` is where clones and worktrees go by default. It is created if missing, so change it only if the user prefers another directory.
 
 ## Conventions
 
@@ -51,10 +51,16 @@ For each issue (most-recently-updated first), decide whether it's actionable fro
     PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
         --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
 
+    # Guard on the timestamp: every string sorts after an empty one, so an unparked
+    # issue would return its entire comment history here and read as a pile of replies.
     # `export` so the filter below can read the timestamp as `env.PARKED`.
-    export PARKED
-    gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}'
+    if [ -z "$PARKED" ]; then
+        echo "no parking rename; not a run-parked issue"
+    else
+        export PARKED
+        gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
+            --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}'
+    fi
     ```
     Three outcomes:
     - `$PARKED` is empty → no parking rename exists, so the suffix was added by hand and there is nothing to measure replies against. Skip the issue and mention it to the user.
@@ -111,14 +117,8 @@ The script clones on first use, recreates the worktree from scratch, resumes fro
 
 Recovery paths, by exit code:
 
-- **4** — the branch is checked out by another worktree left behind by an earlier run. Remove it (`git worktree remove <stale-path> --force`) and run the script again.
+- **4** — the branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again.
 - **3** — the rebase conflicted and has already been aborted. Handle it like Step 4 (comment + `(Needs Info)`) and stop; never keep working in a half-rebased worktree.
-- If `git push` later fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head:
-    ```bash
-    gh pr create --repo <owner>/<repo> --head "$(gh api user --jq '.login'):fix/issue-<number>" \
-        --title "<title>" --body "<body>" --assignee @me
-    ```
-    The `<user>:<branch>` form of `--head` also tells `gh` the branch is already pushed, so it won't offer to fork a second time. It does not accept an organization as the user, so a fork living in an org needs its PR opened by hand. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
 
@@ -148,10 +148,21 @@ git push --force-with-lease -u origin HEAD
 # `<owner>:<branch>` form matches nothing here.
 PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
 if [ -z "$PR_NUMBER" ]; then
-    gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
-    PR_NUMBER=$(gh pr view --json number --jq '.number')
+    # `gh pr create` prints the new Pull Request's URL; its last segment is the number.
+    PR_URL=$(gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me)
+    PR_NUMBER=${PR_URL##*/}
 fi
 ```
+
+If that `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head:
+
+```bash
+PR_URL=$(gh pr create --repo <owner>/<repo> --head "$(gh api user --jq '.login'):fix/issue-<number>" \
+    --title "<title>" --body "<body>" --assignee @me)
+PR_NUMBER=${PR_URL##*/}
+```
+
+The `<user>:<branch>` form of `--head` also tells `gh` the branch is already pushed, so it won't offer to fork a second time. It does not accept an organization as the user, so a fork living in an org needs its PR opened by hand. Keep the fork remote named `fork`: the default naming takes over `origin` and renames the real origin to `upstream`, which would silently repoint every later `origin/$DEFAULT` reference at the fork's stale default branch. Or, if forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 Then verify CI. The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
 

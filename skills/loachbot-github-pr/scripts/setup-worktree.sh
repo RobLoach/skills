@@ -12,7 +12,7 @@
 #
 # Exit codes:
 #   0  Ready. The last line of stdout is the worktree path; cd into it.
-#   4  The PR branch is checked out by another worktree. Remove that stale worktree
+#   4  The PR branch is checked out by another, still-live worktree. Remove that one
 #      (`git worktree remove <path>`) and run this again - never force-switch a
 #      branch across worktrees.
 #   Any other non-zero: `gh pr checkout` or git failed (e.g. the local branch has
@@ -39,6 +39,18 @@ fi
 cd "$BASE"
 git fetch origin --prune
 
+# Drop registrations whose directory is gone, so the add below is not refused by one.
+git worktree prune
+
+# A directory can outlive its registration: an interrupted run, or a base clone that was
+# deleted and re-cloned while .worktrees/ stayed behind. Entering one would point the
+# reset/clean below at whatever repository encloses ~/Projects - conceivably $HOME, if
+# that is a dotfiles checkout - so anything that is not this worktree is removed rather
+# than reused. It is throwaway either way.
+if [ -d "$WT" ] && [ "$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$WT" && pwd -P)" ]; then
+    rm -rf "$WT"
+fi
+
 if [ ! -d "$WT" ]; then
     git worktree add --detach "$WT"
 fi
@@ -49,11 +61,11 @@ git clean -fd
 
 # `gh pr checkout` resolves fork remotes on its own, and --recurse-submodules covers
 # the `git submodule sync`/`update` pair.
-if ! gh pr checkout "$NUMBER" --repo "$OWNER/$REPO" --recurse-submodules 2>/tmp/loachbot-checkout-err; then
-    cat /tmp/loachbot-checkout-err >&2
-    if grep -qE "already exists|already checked out|already used by worktree" /tmp/loachbot-checkout-err; then
-        exit 4
-    fi
+if ! CHECKOUT_ERR=$(gh pr checkout "$NUMBER" --repo "$OWNER/$REPO" --recurse-submodules 2>&1); then
+    printf '%s\n' "$CHECKOUT_ERR" >&2
+    case "$CHECKOUT_ERR" in
+        *"already exists"* | *"already checked out"* | *"already used by worktree"*) exit 4 ;;
+    esac
     exit 1
 fi
 

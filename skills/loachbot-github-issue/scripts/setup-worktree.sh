@@ -14,7 +14,7 @@
 #   0  Ready. The last line of stdout is the worktree path; cd into it.
 #   3  Rebase onto the default branch conflicted. The rebase has been aborted and
 #      the worktree left in place; park the issue rather than working here.
-#   4  The branch is checked out by another worktree. Remove that stale worktree
+#   4  The branch is checked out by another, still-live worktree. Remove that one
 #      (`git worktree remove <path> --force`) and run this again.
 #   Any other non-zero: the command named in stderr failed; report it.
 
@@ -41,8 +41,12 @@ cd "$BASE"
 DEFAULT=$(gh repo view "$OWNER/$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name')
 git fetch origin --prune
 
-# Clear this run's worktree and branch. Both may legitimately not exist.
-git worktree remove "$WT" --force 2>/dev/null || true
+# Clear this run's worktree and branch. Both may legitimately not exist. A directory that
+# outlived its registration - an interrupted run, or a base clone deleted and re-cloned
+# while .worktrees/ stayed behind - is not something `git worktree remove` will take, so
+# remove it outright; the prune then clears any registration left dangling either way.
+git worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+git worktree prune
 git branch -D "$BRANCH" 2>/dev/null || true
 
 # Resume from the remote branch when an earlier run pushed one (e.g. the issue was
@@ -52,13 +56,13 @@ if git rev-parse --verify -q "origin/$BRANCH" >/dev/null; then
     START="origin/$BRANCH"
 fi
 
-if ! git worktree add -b "$BRANCH" "$WT" "$START" 2>/tmp/loachbot-worktree-err; then
-    cat /tmp/loachbot-worktree-err >&2
+if ! ADD_ERR=$(git worktree add -b "$BRANCH" "$WT" "$START" 2>&1); then
+    printf '%s\n' "$ADD_ERR" >&2
     # `git branch -D` above was blocked by another worktree holding the branch, so the
     # branch survived and `worktree add -b` refuses to reuse the name.
-    if grep -qE "already exists|already checked out|already used by worktree" /tmp/loachbot-worktree-err; then
-        exit 4
-    fi
+    case "$ADD_ERR" in
+        *"already exists"* | *"already checked out"* | *"already used by worktree"*) exit 4 ;;
+    esac
     exit 1
 fi
 
