@@ -20,6 +20,42 @@ The `bash` blocks below are templates, not literals: substitute `<owner>` and `<
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
+<!-- SHARED: sub-agents -->
+## Sub-agents
+
+Delegation is the default, not an optimization. The main thread is an orchestrator: it picks the work, runs `gh` and `git`, and reports back to the user. The reading, the searching and the editing belong somewhere else.
+
+Spin up a sub-agent when any one of these is true. Do not weigh them against each other — one is enough:
+
+- You are about to read a file to work out how something works.
+- Answering a question would take more than two searches.
+- You are about to make a change you could not describe in a single sentence.
+- You are about to run a build, a test suite or a linter and then react to its output.
+- Two or more pieces of work do not depend on each other.
+
+Reading a file you have already decided to edit, in order to make that edit, is not investigation — just read it. That exception is narrow, and it is the one that gets over-applied: a run that finishes having spun up no sub-agents at all has almost certainly stretched it.
+
+Keep in the main thread, always: choosing what to work on, every `gh` call, every `git` call, and the report back to the user.
+
+Launch independent sub-agents in a **single message with one tool call each**, so they run concurrently. A second message is a second round-trip.
+
+Choose the type by the job:
+
+- `Explore` — read-only investigation. State how wide to cast: "medium" for a couple of locations, "very thorough" when the naming conventions are unknown.
+- `general-purpose` — anything that edits files, runs a build, or has to iterate.
+
+A sub-agent starts with an empty context, so under-briefing it is the main way delegation fails. Every prompt carries:
+
+1. The absolute path of the directory to work in.
+2. The task stated as an outcome, not as a hint.
+3. The constraints that are not visible from the code: language standard, house style, what to leave alone.
+4. The exact command that proves the work, and an instruction to iterate until it passes.
+5. What to report back: files touched, command output, and anything it could not do.
+6. "Do not commit, push, or open a Pull Request" — those stay in the main thread.
+
+A sub-agent's report is a claim, not a verified result. Before building on it, check the part that matters: read the diff, or re-run the command yourself.
+<!-- /SHARED: sub-agents -->
+
 ## Workflow
 
 ### 1. Resolve the repository
@@ -56,7 +92,7 @@ Read enough to plan with real context. At minimum:
 - `gh pr list --repo <owner>/<repo> --limit 50 --state all`: work in-flight or recently merged (avoid duplicating)
 - `gh api repos/<owner>/<repo>/milestones --jq '.[].title'`: existing milestones to slot the plan into
 
-Fan these independent reads out across parallel subagents and plan from their summaries, keeping raw file contents out of the main thread. Use a code-exploration subagent (e.g. `Explore`) for large repos.
+Fan these independent reads out across concurrent sub-agents and plan from their summaries, keeping raw file contents out of the main thread. See [Sub-agents](#sub-agents) for which type to pick and what each prompt has to carry.
 
 The issue and PR lists above are capped, so on a busy repository they show only the newest slice. Compare the cap against the real total:
 
@@ -149,4 +185,4 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."
-- Use subagents for the step-3 gathering; reserve the main thread for plan synthesis and the approve/file steps.
+- Delegate the step-3 gathering per [Sub-agents](#sub-agents); reserve the main thread for plan synthesis and the approve/file steps.
