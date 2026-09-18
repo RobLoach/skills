@@ -172,10 +172,8 @@ def check_shared_scripts(skill_dirs: list[Path]) -> None:
 def check_shared_sections(skill_dirs: list[Path]) -> None:
     """A SKILL.md block marked `<!-- SHARED: -->` must be identical wherever it appears.
 
-    Each skill is a standalone copy rather than an include of one source, so guidance
-    meant to read the same everywhere drifts a sentence at a time until each skill
-    teaches something subtly different. The markers are the promise that a block is one
-    text with several copies; this check is what keeps that promise true.
+    Skills are standalone copies, not includes of one source, so shared guidance
+    drifts a sentence at a time unless something holds the copies together.
     """
     by_name: dict[str, dict[Path, str]] = {}
 
@@ -191,11 +189,7 @@ def check_shared_sections(skill_dirs: list[Path]) -> None:
             )
             closing = close_re.search(text, opening.end())
             if closing is None:
-                fail(
-                    skill_md,
-                    f"`<!-- SHARED: {name} -->` is never closed "
-                    f"with `<!-- /SHARED: {name} -->`",
-                )
+                fail(skill_md, f"missing closing `<!-- /SHARED: {name} -->`")
                 continue
             copies = by_name.setdefault(name, {})
             if skill_md in copies:

@@ -111,7 +111,7 @@ Every skill is checked on push and pull request by [`.github/workflows/validate.
 python3 .github/scripts/validate-skills.py
 ```
 
-It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, checks that sections and scripts marked as shared are identical in every skill that carries them, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
+It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, checks that shared-marked scripts and sections match across skills, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
 
 ## FAQ
 
