@@ -8,7 +8,7 @@ Checks, per skill:
   * every ```bash block parses under `bash -n`, once <placeholders> are substituted
   * every scripts/*.sh referenced by SKILL.md exists, and none sit there unreferenced
   * scripts marked `# SHARED:` are byte-identical in every skill that carries a copy
-  * SKILL.md sections marked `<!-- SHARED: -->` are byte-identical in every skill
+  * SKILL.md sections marked `<!-- SHARED: -->` are identical wherever they appear
   * scripts start with a shebang and pass shellcheck, when shellcheck is installed
 
 Deliberately dependency-free, so it runs the same way in CI and on a laptop.
@@ -27,7 +27,7 @@ NAME_MAX = 64
 DESCRIPTION_MAX = 1024
 PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
 BASH_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
-SHARED_OPEN_RE = re.compile(r"^<!-- SHARED: (?P<name>[^>]+?) -->$", re.MULTILINE)
+SHARED_OPEN_RE = re.compile(r"^<!-- SHARED: (?P<name>[^>\n]+?) -->$", re.MULTILINE)
 
 failures: list[str] = []
 
@@ -170,17 +170,19 @@ def check_shared_scripts(skill_dirs: list[Path]) -> None:
 
 
 def check_shared_sections(skill_dirs: list[Path]) -> None:
-    """A SKILL.md block marked `<!-- SHARED: -->` must be identical in every skill.
+    """A SKILL.md block marked `<!-- SHARED: -->` must be identical wherever it appears.
 
     Each skill is a standalone copy rather than an include of one source, so guidance
     meant to read the same everywhere drifts a sentence at a time until each skill
     teaches something subtly different. The markers are the promise that a block is one
     text with several copies; this check is what keeps that promise true.
     """
-    documented = [d / "SKILL.md" for d in skill_dirs if (d / "SKILL.md").is_file()]
     by_name: dict[str, dict[Path, str]] = {}
 
-    for skill_md in documented:
+    for skill_dir in skill_dirs:
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
         text = skill_md.read_text()
         for opening in SHARED_OPEN_RE.finditer(text):
             name = opening.group("name")
@@ -195,17 +197,14 @@ def check_shared_sections(skill_dirs: list[Path]) -> None:
                     f"with `<!-- /SHARED: {name} -->`",
                 )
                 continue
-            by_name.setdefault(name, {})[skill_md] = text[
-                opening.start() : closing.end()
-            ]
+            copies = by_name.setdefault(name, {})
+            if skill_md in copies:
+                fail(skill_md, f"SHARED section {name} appears more than once")
+                continue
+            copies[skill_md] = text[opening.start() : closing.end()]
 
     for name, copies in sorted(by_name.items()):
         first, *rest = sorted(copies)
-        absent = [p for p in documented if p not in copies]
-        if absent:
-            for skill_md in absent:
-                fail(skill_md, f"{first} has a SHARED section {name}, but this one does not")
-            continue
         for other in rest:
             if copies[first] != copies[other]:
                 fail(other, f"differs from {first}; SHARED copies of {name} must match")
