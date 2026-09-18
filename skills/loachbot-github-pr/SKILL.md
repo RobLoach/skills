@@ -20,6 +20,35 @@ The `bash` blocks below are templates, not literals: substitute `<owner>`, `<rep
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
+<!-- SHARED: sub-agents -->
+## Sub-agents
+
+Delegate by default. The main thread picks the work, runs `gh` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+
+Spin one up when any one of these holds:
+
+- You would read a file to understand how something works.
+- A question needs more than two searches.
+- A change needs more than one sentence to describe.
+- You would run a build, tests or a linter and react to the output.
+- Two pieces of work are independent — launch them in one message so they run concurrently.
+
+Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
+
+Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
+
+Sub-agents start empty, so every prompt carries:
+
+1. The absolute path to work in.
+2. The outcome, not a hint.
+3. Constraints the code does not show.
+4. The command that proves the work; iterate until it passes.
+5. What to report: files touched, output, anything left undone.
+6. "Do not commit, push, or open a Pull Request."
+
+A report is a claim. Verify what matters: read the diff or re-run the command.
+<!-- /SHARED: sub-agents -->
+
 ## Workflow
 
 ### 1. Find a Pull Request
@@ -133,11 +162,11 @@ AUTHOR=$(gh api user --jq '.login')
 - Skip any comment with `rockets > 0` in the fetches above: a 🚀 reaction marks it as already acted upon (Step 4 adds it only once the work is handled). The count is a bare total, so a 🚀 from you, from LoachBot under the same account, or from any other collaborator all hide the comment alike — 🚀 is reserved for this marker. If it has been used as ordinary emphasis, say so rather than silently skipping those comments.
 - If you resumed a `(Needs Info)` PR, fold in the answers gathered in Step 1 as clarification for the comments they reply to — they may be authored by other users, so the `$AUTHOR` filters above won't surface them.
 
-Run the comment, inline-comment, and review-summary fetches in parallel. Use subagents for any codebase investigation a comment requires.
+Run the comment, inline-comment, and review-summary fetches in parallel. Investigate what comments refer to via [Sub-agents](#sub-agents).
 
 ### 4. Do the work
 
-Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). Independent comments can be worked in parallel subagents. The main thread keeps the git/reaction/ready steps.
+Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). Delegate per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the change; independent comments run as concurrent sub-agents. The main thread keeps the git/reaction/ready steps.
 
 Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
 
@@ -205,7 +234,7 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 
 ## Rules
 
-- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/reaction/ready steps.
+- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration and the git/reaction/ready steps.
 - Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
 - Only one LoachBot skill at a time may run against a given repository. All three share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another.

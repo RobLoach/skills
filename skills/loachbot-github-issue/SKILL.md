@@ -20,6 +20,35 @@ The `bash` blocks below are templates, not literals: substitute `<owner>`, `<rep
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
+<!-- SHARED: sub-agents -->
+## Sub-agents
+
+Delegate by default. The main thread picks the work, runs `gh` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+
+Spin one up when any one of these holds:
+
+- You would read a file to understand how something works.
+- A question needs more than two searches.
+- A change needs more than one sentence to describe.
+- You would run a build, tests or a linter and react to the output.
+- Two pieces of work are independent — launch them in one message so they run concurrently.
+
+Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
+
+Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
+
+Sub-agents start empty, so every prompt carries:
+
+1. The absolute path to work in.
+2. The outcome, not a hint.
+3. Constraints the code does not show.
+4. The command that proves the work; iterate until it passes.
+5. What to report: files touched, output, anything left undone.
+6. "Do not commit, push, or open a Pull Request."
+
+A report is a claim. Verify what matters: read the diff or re-run the command.
+<!-- /SHARED: sub-agents -->
+
 ## Workflow
 
 ### 1. Find one actionable issue
@@ -100,7 +129,7 @@ Once you pick an issue, report its URL to the user immediately:
 - If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1: treat them as clarification for the question that was asked, not as new open-ended instructions.
 - Identify what work is needed from the issue body, the author's comments, and any clarification answers.
 
-Delegate codebase investigation to subagents rather than reading files into the main thread. Fan independent lookups out in parallel.
+Investigate through sub-agents fanned out in parallel, keeping file contents out of the main thread — see [Sub-agents](#sub-agents).
 
 ### 3. Do the work
 
@@ -120,7 +149,7 @@ Recovery paths, by exit code:
 - **4** — the branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again.
 - **3** — the rebase conflicted and has already been aborted. Handle it like Step 4 (comment + `(Needs Info)`) and stop; never keep working in a half-rebased worktree.
 
-For anything beyond a small edit, delegate to a subagent (`cd "$WT"`, make the change, test, report back). The main thread keeps the git/push/PR steps.
+Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix; the main thread keeps the git/push/PR steps.
 
 Implement the fix, test where possible, then commit (still inside `$WT`):
 
@@ -204,7 +233,7 @@ Then report the completed PR URL to the user:
 
 ## Rules
 
-- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, use subagents for codebase reads and implementation; keep the main thread for orchestration and git/PR/un-assign steps.
+- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration and the git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Only one LoachBot skill at a time may run against a given repository. All three share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another.

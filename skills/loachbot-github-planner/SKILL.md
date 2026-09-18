@@ -20,6 +20,35 @@ The `bash` blocks below are templates, not literals: substitute `<owner>` and `<
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
 
+<!-- SHARED: sub-agents -->
+## Sub-agents
+
+Delegate by default. The main thread picks the work, runs `gh` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+
+Spin one up when any one of these holds:
+
+- You would read a file to understand how something works.
+- A question needs more than two searches.
+- A change needs more than one sentence to describe.
+- You would run a build, tests or a linter and react to the output.
+- Two pieces of work are independent — launch them in one message so they run concurrently.
+
+Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
+
+Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
+
+Sub-agents start empty, so every prompt carries:
+
+1. The absolute path to work in.
+2. The outcome, not a hint.
+3. Constraints the code does not show.
+4. The command that proves the work; iterate until it passes.
+5. What to report: files touched, output, anything left undone.
+6. "Do not commit, push, or open a Pull Request."
+
+A report is a claim. Verify what matters: read the diff or re-run the command.
+<!-- /SHARED: sub-agents -->
+
 ## Workflow
 
 ### 1. Resolve the repository
@@ -56,7 +85,7 @@ Read enough to plan with real context. At minimum:
 - `gh pr list --repo <owner>/<repo> --limit 50 --state all`: work in-flight or recently merged (avoid duplicating)
 - `gh api repos/<owner>/<repo>/milestones --jq '.[].title'`: existing milestones to slot the plan into
 
-Fan these independent reads out across parallel subagents and plan from their summaries, keeping raw file contents out of the main thread. Use a code-exploration subagent (e.g. `Explore`) for large repos.
+Fan these reads out across concurrent sub-agents per [Sub-agents](#sub-agents) and plan from their summaries, keeping raw file contents out of the main thread.
 
 The issue and PR lists above are capped, so on a busy repository they show only the newest slice. Compare the cap against the real total:
 
@@ -149,4 +178,4 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."
-- Use subagents for the step-3 gathering; reserve the main thread for plan synthesis and the approve/file steps.
+- Delegate the step-3 gathering per [Sub-agents](#sub-agents); reserve the main thread for plan synthesis and the approve/file steps.

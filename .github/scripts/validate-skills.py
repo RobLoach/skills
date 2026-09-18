@@ -8,6 +8,7 @@ Checks, per skill:
   * every ```bash block parses under `bash -n`, once <placeholders> are substituted
   * every scripts/*.sh referenced by SKILL.md exists, and none sit there unreferenced
   * scripts marked `# SHARED:` are byte-identical in every skill that carries a copy
+  * SKILL.md sections marked `<!-- SHARED: -->` are identical wherever they appear
   * scripts start with a shebang and pass shellcheck, when shellcheck is installed
 
 Deliberately dependency-free, so it runs the same way in CI and on a laptop.
@@ -26,6 +27,7 @@ NAME_MAX = 64
 DESCRIPTION_MAX = 1024
 PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
 BASH_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+SHARED_OPEN_RE = re.compile(r"^<!-- SHARED: (?P<name>[^>\n]+?) -->$", re.MULTILINE)
 
 failures: list[str] = []
 
@@ -167,6 +169,41 @@ def check_shared_scripts(skill_dirs: list[Path]) -> None:
                 fail(other, f"differs from {first}; SHARED copies of {name} must match")
 
 
+def check_shared_sections(skill_dirs: list[Path]) -> None:
+    """A SKILL.md block marked `<!-- SHARED: -->` must be identical wherever it appears.
+
+    Skills are standalone copies, not includes of one source, so shared guidance
+    drifts a sentence at a time unless something holds the copies together.
+    """
+    by_name: dict[str, dict[Path, str]] = {}
+
+    for skill_dir in skill_dirs:
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        text = skill_md.read_text()
+        for opening in SHARED_OPEN_RE.finditer(text):
+            name = opening.group("name")
+            close_re = re.compile(
+                rf"^<!-- /SHARED: {re.escape(name)} -->$", re.MULTILINE
+            )
+            closing = close_re.search(text, opening.end())
+            if closing is None:
+                fail(skill_md, f"missing closing `<!-- /SHARED: {name} -->`")
+                continue
+            copies = by_name.setdefault(name, {})
+            if skill_md in copies:
+                fail(skill_md, f"SHARED section {name} appears more than once")
+                continue
+            copies[skill_md] = text[opening.start() : closing.end()]
+
+    for name, copies in sorted(by_name.items()):
+        first, *rest = sorted(copies)
+        for other in rest:
+            if copies[first] != copies[other]:
+                fail(other, f"differs from {first}; SHARED copies of {name} must match")
+
+
 def shellcheck_usable() -> bool:
     """Finding `shellcheck` on PATH is not enough to know it runs.
 
@@ -221,6 +258,7 @@ def main() -> int:
         check_scripts(skill_dir, text)
 
     check_shared_scripts(skill_dirs)
+    check_shared_sections(skill_dirs)
     run_shellcheck(skill_dirs)
 
     readme = root / "README.md"
