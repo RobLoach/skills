@@ -23,37 +23,30 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegation is the default, not an optimization. The main thread is an orchestrator: it picks the work, runs `gh` and `git`, and reports back to the user. The reading, the searching and the editing belong somewhere else.
+Delegate by default. The main thread only picks the work, runs `gh` and `git`, and reports to the user. Sub-agents do the reading, searching and editing.
 
-Spin up a sub-agent when any one of these is true. Do not weigh them against each other — one is enough:
+Spin one up when any of these holds — one is enough:
 
-- You are about to read a file to work out how something works.
-- Answering a question would take more than two searches.
-- You are about to make a change you could not describe in a single sentence.
-- You are about to run a build, a test suite or a linter and then react to its output.
-- Two or more pieces of work do not depend on each other.
+- You would read a file to understand how something works.
+- A question needs more than two searches.
+- A change needs more than one sentence to describe.
+- You would run a build, tests or a linter and react to the output.
+- Two pieces of work are independent. Launch them in one message so they run concurrently.
 
-Reading a file you have already decided to edit, in order to make that edit, is not investigation — just read it. That exception is narrow, and it is the one that gets over-applied: a run that finishes having spun up no sub-agents at all has almost certainly stretched it.
+The only exception: reading a file you already decided to edit, to make that edit. A run that used no sub-agents at all almost certainly stretched it.
 
-Keep in the main thread, always: choosing what to work on, every `gh` call, every `git` call, and the report back to the user.
+Types: `Explore` for read-only investigation (say how thorough to be); `general-purpose` for anything that edits or iterates.
 
-Launch independent sub-agents in a **single message with one tool call each**, so they run concurrently. A second message is a second round-trip.
+A sub-agent starts empty, so every prompt carries:
 
-Choose the type by the job:
+1. The absolute path to work in.
+2. The outcome wanted, not a hint.
+3. Constraints the code does not show: style, what to leave alone.
+4. The command that proves the work; iterate until it passes.
+5. What to report back: files touched, output, anything left undone.
+6. "Do not commit, push, or open a Pull Request."
 
-- `Explore` — read-only investigation. State how wide to cast: "medium" for a couple of locations, "very thorough" when the naming conventions are unknown.
-- `general-purpose` — anything that edits files, runs a build, or has to iterate.
-
-A sub-agent starts with an empty context, so under-briefing it is the main way delegation fails. Every prompt carries:
-
-1. The absolute path of the directory to work in.
-2. The task stated as an outcome, not as a hint.
-3. The constraints that are not visible from the code: language standard, house style, what to leave alone.
-4. The exact command that proves the work, and an instruction to iterate until it passes.
-5. What to report back: files touched, command output, and anything it could not do.
-6. "Do not commit, push, or open a Pull Request" — those stay in the main thread.
-
-A sub-agent's report is a claim, not a verified result. Before building on it, check the part that matters: read the diff, or re-run the command yourself.
+A report is a claim, not a result. Verify what matters: read the diff, or re-run the command.
 <!-- /SHARED: sub-agents -->
 
 ## Workflow
