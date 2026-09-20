@@ -13,8 +13,8 @@
 # Exit codes:
 #   0  Ready. The last line of stdout is the worktree path; cd into it.
 #   4  The PR branch is checked out by another, still-live worktree. Remove that one
-#      (`git worktree remove <path>`) and run this again - never force-switch a
-#      branch across worktrees.
+#      (`git worktree remove <path> --force`) and run this again - never force-switch
+#      a branch across worktrees.
 #   Any other non-zero: `gh pr checkout` or git failed (e.g. the local branch has
 #      diverged). Report it rather than forcing through.
 

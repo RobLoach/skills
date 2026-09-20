@@ -9,16 +9,20 @@ metadata:
 
 # LoachBot GitHub Pull Request Fixer
 
+<!-- SHARED: prerequisites -->
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
 - `~/Projects` is where clones and worktrees go by default. It is created if missing, so change it only if the user prefers another directory.
+<!-- /SHARED: prerequisites -->
 
+<!-- SHARED: conventions -->
 ## Conventions
 
 The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+<!-- /SHARED: conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
@@ -53,11 +57,13 @@ A report is a claim. Verify what matters: read the diff or re-run the command.
 
 ### 1. Find a Pull Request
 
+<!-- SHARED: search-scoping -->
 The search spans every repository by default. Scope it first, in this order:
 
 1. A repo named in the prompt or skill arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
 2. Otherwise, if the user asked to work "on this project" and the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`, and add `--repo` for that.
 3. Otherwise search account-wide, as below.
+<!-- /SHARED: search-scoping -->
 
 ```bash
 # Open draft Pull Requests I authored that are assigned to me, newest activity first.
@@ -72,31 +78,14 @@ If no items are found, report "Nothing to do" and stop.
 For each PR (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
 
 - Title does **not** end with ` (Needs Info)` → actionable.
-- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Find that parking rename, then look for anything posted since — a reply can be a regular comment or an inline review comment:
+- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Check for answers:
     ```bash
-    # A parking run comments first and renames second, so the parking rename is the newest
-    # event it leaves behind. Take the most recent one: a PR can be parked, answered and
-    # re-parked any number of times.
-    PARKED=$(gh api --paginate "repos/<owner>/<repo>/issues/<number>/events" \
-        --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' | tail -1)
-
-    # Guard on the timestamp: every string sorts after an empty one, so an unparked PR
-    # would return its entire comment history here and read as a pile of replies.
-    # `export` so the filters below can read the timestamp as `env.PARKED`.
-    if [ -z "$PARKED" ]; then
-        echo "no parking rename; not a run-parked PR"
-    else
-        export PARKED
-        gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-            --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}'
-        gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-            --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}'
-    fi
+    bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number> pr
     ```
-    Three outcomes:
-    - `$PARKED` is empty → no parking rename exists, so the suffix was added by hand and there is nothing to measure replies against. Skip the PR and mention it to the user.
-    - Either query returned replies → the question was answered. Keep them for Steps 3-4; they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
-    - No replies → nobody has answered yet. Skip the PR.
+    Act on its exit code:
+    - **0** → answered; the printed replies are clarification for Steps 3-4 — they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
+    - **6** → nobody has answered yet. Skip the PR.
+    - **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip the PR and mention it to the user.
 
 Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
 
@@ -130,7 +119,7 @@ The script clones on first use, discards uncommitted leftovers from an interrupt
 
 Recovery paths, by exit code:
 
-- **4** — the PR branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path>`, then `git worktree prune`) and run the script again; do **not** force-switch branches across worktrees.
+- **4** — the PR branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again; do **not** force-switch branches across worktrees.
 - Any other non-zero — checkout failed, for instance because the local branch diverged. Stop and report; do not force through it.
 
 ### 3. Understand the Pull Request
