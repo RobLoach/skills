@@ -97,7 +97,7 @@ Run LoachBot Pull Requests until there aren't any left
 
 Takes one of your open [drupal.org](https://www.drupal.org) merge requests, rebases it onto its target branch in a dedicated worktree, resolves what it safely can, and then makes **every** CI job green before handing the issue back for review with `/do:` commands.
 
-The emphasis on *every* is the point. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` as `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. This skill reads per-job status instead of the rollup and treats a forgiven failure as a failure.
+The emphasis on *every* is the point. Drupal.org's CI template marks some jobs `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. Which jobs varies by project: the lint jobs usually, but `eslint`, `composer` variants and even `phpunit` variants on some. This skill reads each job's own flag instead of the rollup, and treats a forgiven failure as a failure.
 
 Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers.
 
@@ -114,7 +114,7 @@ Run LoachBot MRs until there aren't any left
 
 Reviews one [drupal.org](https://www.drupal.org) merge request — yours or somebody else's — against the issue it claims to fix and against Drupal's own conventions, then posts its findings as resolvable inline threads plus a single summary.
 
-It starts from the issue rather than the code, because the most common real finding is scope: something the diff does that nobody asked for, or something the issue asked for that the diff never does. It also reads the pipeline per job, so a merge request sitting on a red `cspell` behind a green badge gets called out.
+It starts from the issue rather than the code, because the most common real finding is scope: something the diff does that nobody asked for, or something the issue asked for that the diff never does. It also reads the pipeline per job, so a merge request sitting on a red but forgiven job behind a green badge gets called out.
 
 Entirely read-only against git — no clone, no checkout, no push — so it can run alongside anything else, including the Fixer working on the same merge request. It will set `state::needsWork` when a finding genuinely blocks, and it will never approve, merge, or set `state::rtbc`.
 
@@ -180,7 +180,9 @@ The reason they check rather than just trying both: the two numbering spaces ove
 
 **My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 
-Because the pipeline is lying, and noticing that is half of why these two exist. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` `allow_failure: true`, which means the job can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red. Both skills read per-job status and report those as failures, marked so you can see which ones the pipeline was forgiving — the Fixer fixes them, the Reviewer raises them as findings.
+Because the pipeline is lying, and noticing that is half of why these two exist. Drupal.org's CI template marks some jobs `allow_failure: true`, which means they can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red.
+
+Which jobs are forgiven is per-project configuration rather than a fixed list. Observed in the wild: `ai_ckeditor` forgives four lint jobs, `node_menu_placer` fourteen including `eslint`, and `schemata` sixteen including `phpunit` variants — Drupal core forgives `PHPUnit Unit (Core)`. So both skills read each job's own flag and report what they find, marked so you can see which ones the pipeline was forgiving: the Fixer fixes them, the Reviewer raises them as findings.
 
 **Can I point it at a single repository?**
 

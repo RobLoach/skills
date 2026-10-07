@@ -74,22 +74,19 @@ Four things here are not what a GitLab habit expects. Each one fails quietly rat
 - **Two hostnames, one service.** The API lives at `git.drupalcode.org`; git itself lives at `git.drupal.org`. An API path on the git host and an SSH URL on the API host both fail. Take remote URLs from the API's own `ssh_url_to_repo` instead of composing them.
 - **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in a per-issue fork at `issue/<project>-<issue-id>`. Pushes go to the fork.
 - **The pipeline runs on the fork.** Ask the target project for it and you get a flat `404`. Use the merge request's `source_project_id`.
-- **A green pipeline can hide red jobs.** `cspell`, `phpcs`, `phpstan` and `stylelint` are `allow_failure: true` in drupal.org's CI template, so the pipeline, the badge and `glab ci status` all report success while those jobs are red. Never trust the rollup; read per-job status.
+- **A green pipeline can hide red jobs.** Drupal.org's CI template marks jobs `allow_failure: true`, so they fail without failing the pipeline — and the pipeline, the badge and `glab ci status` all then report success while those jobs are red. *Which* jobs is per-project configuration, not a fixed set: the lint jobs usually (`cspell`, `phpcs`, `phpstan`, `stylelint`), but `eslint`, `composer` variants and even `phpunit` variants carry it on some projects. So never match on a list of names — read each job's own `allow_failure` and treat a forgiven failure as a failure.
 
 ### The issue lives in one of two places
 
-Every merge request has an issue behind it, and the fork's path ends in that issue's number — `issue/ai_ckeditor-3615852` means `3615852`, taking the last hyphen-separated field so a project whose machine name contains a hyphen still works. What that number *means*, though, depends on the project:
+A merge request's issue number is the tail of its fork's path: `issue/ai_ckeditor-3615852` means `3615852`. What that number *means* depends on the project — a GitLab issue iid where the queue was migrated, a drupal.org node id where it never was (Drupal core and `eck` among them) — and the two numbering spaces overlap, so reading it in the wrong world returns a real but unrelated issue rather than nothing.
 
-- **Issues migrated into GitLab** (most of contrib, including the ones served as work items at `/-/work_items/<id>`): the project numbers them itself, and the fork's number is a GitLab issue iid. State lives in `state::needsWork` / `state::needsReview` / `state::rtbc` labels, and `/do:` commands work.
-- **Issues never migrated** (Drupal core and `eck` among them): the queue is on drupal.org only, `projects/project%2F<project>/issues` comes back `[]`, and the fork's number is a drupal.org node id. State is the issue's own status — *Needs review*, *RTBC*, *Fixed* — and there is no `/do:` path, because drupal.org moves state through its web UI.
-
-The two numbering spaces overlap, and that is a trap rather than a convenience: `ai_ckeditor`'s GitLab issue `3615852` is about stale toolbar items, while drupal.org's *node* `3615852` is an unrelated Drupal core issue about `ConfigManager`. Asking both places and keeping whichever answers does not degrade gracefully — it hands back a confident, wrong requirement. So never do that. Decide the world first, from whether the project has GitLab issues at all, then interpret the number:
+Never try both and keep whichever answers. One script decides the world first and then interprets the number; `read-issue.sh`'s header explains why that order matters:
 
 ```bash
 bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
 ```
 
-It returns one JSON object either way — `source`, `title`, `status`, `actionable`, `writable`, `url`, `description` — so nothing downstream has to care which world it came from. Read its header for the full shape. Act on its exit code:
+It returns one JSON object either way — `source`, `title`, `status`, `actionable`, `writable`, `url`, `description` — so nothing downstream has to care which world it came from. Act on its exit code:
 
 - **0** → read. `actionable: false` means the issue is fixed, closed, postponed or already reviewed-and-tested: leave it alone. `writable: false` means `/do:` cannot be posted, so any handback goes to the user instead.
 - **6** → unreadable in the world this project belongs to. Report it; do **not** try the other world.
@@ -101,7 +98,7 @@ For anything about `glab` itself — note bodies, threaded replies, `--field` ve
 Two more matter specifically for rebasing:
 
 - **`has_conflicts` and `detailed_merge_status` are unreliable.** They sit at `unchecked` indefinitely and never settle, so filtering on them finds nothing and reports "nothing to do" forever. Conflicts are discovered by rebasing locally, which Step 3 does anyway.
-- **The forgiven lint jobs are most of what this skill is for.** A merge request whose only problem is a red `cspell` looks finished from every angle except the one that counts.
+- **The forgiven jobs are most of what this skill is for.** A merge request whose only problem is a red `cspell` — or a red `phpunit` variant, on a project that forgives those — looks finished from every angle except the one that counts.
 
 ## Workflow
 
@@ -219,7 +216,7 @@ bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid>
 Act on the script's exit code:
 
 - **0** → every job passed. Continue.
-- **1** → jobs failed, listed with `(allow_failure)` on the forgiven ones. **Fix all of them, forgiven or not.** A red `cspell` or `phpstan` on a green pipeline is exactly the failure this skill exists to catch, and leaving it is how it accumulated in the first place. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix; at most two fix-and-push attempts, then park per Step 5.
+- **1** → jobs failed, listed with `(allow_failure)` on the forgiven ones. **Fix all of them, forgiven or not.** A forgiven job red on a green pipeline is exactly the failure this skill exists to catch, and leaving it is how it accumulated in the first place. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix; at most two fix-and-push attempts, then park per Step 5.
 - **7** → the pipeline could not be read. Unknown is not passing: report it with the merge request URL and stop.
 - **8** → still running after the full wait. Report the pending jobs and the URL, then stop without handing back — a later run picks it up once CI has settled.
 

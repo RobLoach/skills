@@ -5,12 +5,15 @@
 #
 # Usage: bash scripts/wait-for-pipeline.sh <project> <mr-iid>
 #
-# Drupal's GitLab CI template marks cspell, phpcs, phpstan and stylelint
-# `allow_failure: true`. The pipeline goes green with all four of them red, and both
-# `glab ci status` and the merge request's own badge agree it passed. Anything that
-# trusts the rollup will call such a merge request done with its lint gates broken,
-# which is the one outcome this script exists to prevent: it reads per-job status and
-# treats a forgiven failure as a failure.
+# Drupal's GitLab CI template marks some jobs `allow_failure: true`: they fail without
+# failing the pipeline, so `glab ci status` and the merge request's own badge both agree
+# it passed. Anything that trusts the rollup will call such a merge request done with
+# those gates broken, which is the one outcome this script exists to prevent: it reads
+# per-job status and treats a forgiven failure as a failure.
+#
+# Which jobs are forgiven is per-project configuration rather than a fixed set - the lint
+# jobs usually, but eslint, composer variants and phpunit variants on some projects - so
+# this matches on each job's own allow_failure flag and never on a list of names.
 #
 # Two details that are easy to get wrong, and silently:
 #   * The pipeline belongs to the *source* fork, not the project the merge request

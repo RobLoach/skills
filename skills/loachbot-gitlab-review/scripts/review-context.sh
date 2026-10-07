@@ -19,10 +19,13 @@
 #   }
 #
 # `failing_jobs` is the point of collecting `jobs` at all. Drupal's CI template marks
-# cspell, phpcs, phpstan and stylelint `allow_failure: true`, so the pipeline reports
-# success with those jobs red. A reviewer who trusts the rollup signs off on a branch
-# with broken lint gates, so the failures are surfaced separately and the forgiven ones
-# keep their `allow_failure` flag rather than being filtered out.
+# some jobs `allow_failure: true`, so the pipeline reports success with those jobs red. A
+# reviewer who trusts the rollup signs off on a branch with broken gates, so the failures
+# are surfaced separately and the forgiven ones keep their `allow_failure` flag rather
+# than being filtered out.
+#
+# Which jobs carry it is per-project configuration, not a fixed set, so nothing here
+# matches on job names.
 #
 # The pipeline belongs to the *source* fork, not the project the merge request targets;
 # asking the target project for it returns 404. The diff itself is read from the target.
