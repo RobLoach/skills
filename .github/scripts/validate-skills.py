@@ -8,6 +8,7 @@ Checks, per skill:
   * every ```bash block parses under `bash -n`, once <placeholders> are substituted
   * every scripts/*.sh referenced by SKILL.md exists, and none sit there unreferenced
   * scripts marked `# SHARED:` are byte-identical in every skill that carries a copy
+  * a script's `Exit codes:` block lists exactly the codes it really exits with
   * SKILL.md sections marked `<!-- SHARED: -->` are identical wherever they appear
   * scripts start with a shebang and pass shellcheck, when shellcheck is installed
 
@@ -204,6 +205,68 @@ def check_shared_sections(skill_dirs: list[Path]) -> None:
                 fail(other, f"differs from {first}; SHARED copies of {name} must match")
 
 
+def check_exit_codes(skill_dirs: list[Path]) -> None:
+    """A script's documented exit codes and its real ones must agree.
+
+    Every skill here hands control back to the agent through an exit code, and the header
+    comment is the only contract for what each one means. A code that is raised but
+    undocumented leaves the agent guessing; a code that is documented but never raised is
+    a branch somebody is waiting for that can never arrive. Neither shows up in a syntax
+    check, so compare the two lists directly.
+
+    Three legitimate patterns would otherwise read as mismatches, so each disables the
+    half of the check it defeats:
+      * `exit "$STATUS"` passes another command's code straight through, so which codes
+        can appear is unknowable here - that script's documented-but-unraised list is
+        skipped rather than guessed at.
+      * A header saying "Any other non-zero" is deliberately open-ended, so its
+        raised-but-undocumented list is skipped.
+      * `exit 4 ;;` inside a `case` is still a literal exit, and is matched as one.
+
+    64 is the usage error every script shares and is not worth documenting each time.
+    0 needs no `exit 0`, since falling off the end means the same thing.
+    """
+    for skill_dir in skill_dirs:
+        for script in sorted((skill_dir / "scripts").glob("*.sh")):
+            text = script.read_text()
+
+            header = re.search(
+                r"^# Exit codes:\n(?P<body>(?:#.*\n)+)", text, re.MULTILINE
+            )
+            # Comment lines are dropped first: the header itself talks about exit codes,
+            # and `exit 4 ;;` is a real exit that sits after a `case` pattern rather than
+            # at the start of its line, so neither end can be anchored.
+            code_lines = [
+                line for line in text.split("\n") if not line.lstrip().startswith("#")
+            ]
+            code = "\n".join(code_lines)
+            raised = {int(m) for m in re.findall(r"\bexit\s+(\d+)\b", code)}
+            raised.discard(64)
+            passes_through = re.search(r"\bexit\s+\"?\$", code) is not None
+
+            if header is None:
+                if raised - {0}:
+                    fail(script, "raises exit codes but documents no `# Exit codes:` block")
+                continue
+
+            body = header.group("body")
+            documented = {
+                int(m) for m in re.findall(r"^#\s+(\d+)\s", body, re.MULTILINE)
+            }
+            documented.discard(64)
+            open_ended = "any other non-zero" in body.lower()
+
+            if not open_ended:
+                for code in sorted(raised - documented - {0}):
+                    fail(
+                        script,
+                        f"exits {code}, which its `Exit codes:` block does not document",
+                    )
+            if not passes_through:
+                for code in sorted(documented - raised - {0}):
+                    fail(script, f"documents exit {code}, which it never raises")
+
+
 def shellcheck_usable() -> bool:
     """Finding `shellcheck` on PATH is not enough to know it runs.
 
@@ -258,6 +321,7 @@ def main() -> int:
         check_scripts(skill_dir, text)
 
     check_shared_scripts(skill_dirs)
+    check_exit_codes(skill_dirs)
     check_shared_sections(skill_dirs)
     run_shellcheck(skill_dirs)
 
