@@ -75,7 +75,12 @@ fi
 
 # Wait for the pipeline itself to reach a terminal state. `manual` and `scheduled`
 # are terminal too: nothing further happens without a human.
+#
+# A single unreadable response is a blip, not an answer. Giving up on the first one
+# would abandon a run over one dropped connection, so only a run of them counts as
+# "cannot read" - the same reasoning as the no-pipeline probes above.
 STATUS=
+MISSES=0
 for _ in $(seq 1 "$MAX_POLLS"); do
     if ! STATUS=$(api "projects/$SOURCE_ID/pipelines/$PIPELINE_ID" 2>/dev/null |
         jq -r '.status // empty'); then
@@ -84,9 +89,14 @@ for _ in $(seq 1 "$MAX_POLLS"); do
     case $STATUS in
         success | failed | canceled | skipped | manual | scheduled) break ;;
         "")
-            echo "cannot read pipeline $PIPELINE_ID in project $SOURCE_ID" >&2
-            exit 7
+            MISSES=$((MISSES + 1))
+            if [ "$MISSES" -ge "$NO_PIPELINE_PROBES" ]; then
+                echo "cannot read pipeline $PIPELINE_ID in project $SOURCE_ID" \
+                    "($MISSES consecutive failures)" >&2
+                exit 7
+            fi
             ;;
+        *) MISSES=0 ;;
     esac
     sleep "$POLL_SECONDS"
 done

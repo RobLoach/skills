@@ -1,13 +1,10 @@
 ---
+name: loachbot-gitlab-mr
 description: Autonomous drupal.org merge request maintainer called LoachBot. Rebases one of your open merge requests onto its target branch, resolves conflicts, and makes every CI job green - including the lint jobs drupal.org's pipeline forgives and hides. Use when the user wants to rebase a drupal.org merge request, fix merge conflicts on one, fix pipeline or cspell/phpcs/phpstan/phpunit failures, or asks to "run LoachBot MRs", including repeated runs like "run LoachBot MRs five times" or "until there aren't any left".
 metadata:
     author: RobLoach
-    github-path: skills/loachbot-gitlab-mr
-    github-ref: refs/heads/main
-    github-repo: https://github.com/robloach/skills
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-mr/SKILL.md
     license: MIT
-name: loachbot-gitlab-mr
 ---
 # LoachBot GitLab Merge Request Fixer
 
@@ -125,10 +122,12 @@ Act on its exit code:
 - **6** → nobody has answered yet. Skip it.
 - **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip it and mention it to the user.
 
-Skip it when the issue is already `state::rtbc` — somebody is waiting to commit it, and a force-push would reset that:
+Skip it when the issue is already `state::rtbc` — somebody is waiting to commit it, and a force-push would reset that. The issue's id is the numeric half of the fork's path, so read it from the merge request's source project rather than parsing the branch name, which contributors do rename:
 
 ```bash
-glab api --hostname git.drupalcode.org "projects/project%2F<project>/issues/<issue-id>" |
+ISSUE_ID=$(glab api --hostname git.drupalcode.org "projects/<source-project-id>" |
+    jq -r '.path_with_namespace | split("-") | last')
+glab api --hostname git.drupalcode.org "projects/project%2F<project>/issues/$ISSUE_ID" |
     jq -r '.labels | join(",")'
 ```
 

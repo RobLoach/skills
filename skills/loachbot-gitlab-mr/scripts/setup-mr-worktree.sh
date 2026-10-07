@@ -100,7 +100,8 @@ if [ -d "$WT" ]; then
     git worktree remove "$WT" --force >&2 || rm -rf "$WT"
 fi
 git worktree prune >&2
-git branch -D "mr-$IID" >&2 2>/dev/null || true
+# Both may legitimately not exist on a first run.
+git branch -D "mr-$IID" >/dev/null 2>&1 || true
 
 # The local branch is disposable; the fork branch is what the merge request shows.
 git worktree add -b "mr-$IID" "$WT" "fork/$SOURCE_BRANCH" >&2
@@ -113,7 +114,8 @@ if ! git rebase "upstream/$TARGET_BRANCH" >&2; then
     exit 3
 fi
 
-git submodule update --init --recursive >&2 2>/dev/null || true
+git submodule sync --recursive >&2
+git submodule update --init --recursive >&2
 
 # Everything the caller needs, with the path last so `| tail -1` picks it up.
 echo "source_branch=$SOURCE_BRANCH" >&2
