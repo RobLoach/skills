@@ -34,6 +34,8 @@
 set -euo pipefail
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=${1:?project machine name required}
 IID=${2:?merge request iid required}
 
@@ -44,7 +46,7 @@ NO_PIPELINE_PROBES=${LOACHBOT_PIPELINE_PROBES:-5}
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-read_mr() { api "projects/project%2F$PROJECT/merge_requests/$IID" 2>/dev/null; }
+read_mr() { api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null; }
 
 # A pipeline takes a moment to attach after a push.
 sleep "$SETTLE_SECONDS"
@@ -64,7 +66,7 @@ for _ in $(seq 1 "$NO_PIPELINE_PROBES"); do
 done
 
 if [ -z "$SOURCE_ID" ]; then
-    echo "cannot read merge request !$IID in project/$PROJECT on $HOST" >&2
+    echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 7
 fi
 

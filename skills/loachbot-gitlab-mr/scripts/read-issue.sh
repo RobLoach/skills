@@ -61,23 +61,25 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 REF=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
 # Which world? A project with no GitLab issues at all never migrated its queue.
-if ! PROBE=$(api "projects/project%2F$PROJECT/issues?per_page=1" 2>/dev/null) ||
+if ! PROBE=$(api "projects/$NAMESPACE%2F$PROJECT/issues?per_page=1" 2>/dev/null) ||
     [ "$(printf '%s' "$PROBE" | jq -r 'type')" != "array" ]; then
-    echo "cannot tell whether project/$PROJECT keeps its issues in GitLab" >&2
+    echo "cannot tell whether $NAMESPACE/$PROJECT keeps its issues in GitLab" >&2
     exit 6
 fi
 
 if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
     # Migrated: the fork's number is a GitLab issue iid.
-    if ! ISSUE=$(api "projects/project%2F$PROJECT/issues/$REF" 2>/dev/null) ||
+    if ! ISSUE=$(api "projects/$NAMESPACE%2F$PROJECT/issues/$REF" 2>/dev/null) ||
         [ "$(printf '%s' "$ISSUE" | jq -r '.iid // empty')" = "" ]; then
-        echo "project/$PROJECT keeps its issues in GitLab, but issue $REF is not there" >&2
+        echo "$NAMESPACE/$PROJECT keeps its issues in GitLab, but issue $REF is not there" >&2
         exit 6
     fi
     printf '%s' "$ISSUE" | jq -c --arg ref "$REF" '{
@@ -101,7 +103,7 @@ fi
 # Not migrated: the fork's number is a drupal.org node id, and drupal.org is the only
 # place the issue exists.
 if ! command -v drupalorg >/dev/null 2>&1; then
-    echo "project/$PROJECT keeps its issues on drupal.org, which needs the drupalorg CLI" >&2
+    echo "$NAMESPACE/$PROJECT keeps its issues on drupal.org, which needs the drupalorg CLI" >&2
     echo "install it from https://github.com/mglaman/drupalorg-cli" >&2
     exit 6
 fi

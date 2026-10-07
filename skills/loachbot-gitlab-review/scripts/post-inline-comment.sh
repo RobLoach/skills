@@ -35,6 +35,8 @@ if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
 PATH_NEW=$3
@@ -49,9 +51,9 @@ fi
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-if ! MR=$(api "projects/project%2F$PROJECT/merge_requests/$IID" 2>/dev/null) ||
+if ! MR=$(api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null) ||
     [ "$(printf '%s' "$MR" | jq -r '.diff_refs.head_sha // empty')" = "" ]; then
-    echo "cannot read merge request !$IID in project/$PROJECT on $HOST" >&2
+    echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
 
@@ -59,26 +61,48 @@ BASE_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.base_sha')
 START_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.start_sha')
 HEAD_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.head_sha')
 
-# `-f` sends a literal string; `-F` would read a leading @ as a filename. The body is the
-# one field that has to be `-F`, pointing at a real file.
-set -- \
-    -F "body=@$BODY_FILE" \
-    -f "position[base_sha]=$BASE_SHA" \
-    -f "position[start_sha]=$START_SHA" \
-    -f "position[head_sha]=$HEAD_SHA" \
-    -f "position[position_type]=text" \
-    -f "position[new_path]=$PATH_NEW" \
-    -f "position[old_path]=$PATH_NEW" \
-    -f "position[new_line]=$LINE_NEW"
+# `position` is a nested object, and `--field`/`--raw-field` cannot express one: they
+# send `position[base_sha]` as a literal key name, which GitLab silently ignores. The
+# POST then succeeds, returns 201, and creates an ordinary comment in the Overview tab
+# with no position at all - the worst outcome available, because nothing reports an
+# error. So the body goes as real JSON through `--input`, with the Content-Type that
+# `--input` does not set on its own.
+PAYLOAD=$(jq -n \
+    --rawfile body "$BODY_FILE" \
+    --arg base_sha "$BASE_SHA" \
+    --arg start_sha "$START_SHA" \
+    --arg head_sha "$HEAD_SHA" \
+    --arg path "$PATH_NEW" \
+    --argjson new_line "$LINE_NEW" \
+    --arg old_line "$LINE_OLD" \
+    '{
+        body: $body,
+        position: ({
+            base_sha: $base_sha,
+            start_sha: $start_sha,
+            head_sha: $head_sha,
+            position_type: "text",
+            new_path: $path,
+            old_path: $path,
+            new_line: $new_line
+        } + (if $old_line == "" then {} else {old_line: ($old_line | tonumber)} end))
+    }')
 
-if [ -n "$LINE_OLD" ]; then
-    set -- "$@" -f "position[old_line]=$LINE_OLD"
-fi
-
-if ! RESPONSE=$(api --method POST \
-    "projects/project%2F$PROJECT/merge_requests/$IID/discussions" "$@" 2>&1); then
+if ! RESPONSE=$(printf '%s' "$PAYLOAD" | api --method POST \
+    -H "Content-Type: application/json" --input - \
+    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/discussions" 2>&1); then
     printf '%s\n' "$RESPONSE" >&2
     echo "GitLab rejected the inline position for $PATH_NEW:$LINE_NEW" >&2
+    exit 1
+fi
+
+# 201 is not proof. A dropped position yields a DiscussionNote rather than a DiffNote,
+# so the thread exists but sits in the Overview tab instead of on the line - which reads
+# as success to anything that only checks the exit status. Confirm what was created.
+if [ "$(printf '%s' "$RESPONSE" | jq -r '[.notes[]? | select(.type == "DiffNote")] | length')" = "0" ]; then
+    printf '%s\n' "$RESPONSE" >&2
+    echo "the thread was created without a position, so it is not on the diff:" \
+        "delete it and fall back to a summary comment" >&2
     exit 1
 fi
 

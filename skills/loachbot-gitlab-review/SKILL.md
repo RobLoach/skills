@@ -13,6 +13,7 @@ metadata:
 - `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
 - `jq` is on `PATH`. `glab api` has no built-in filter, so the scripts beside this file parse JSON with `jq`.
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab — Drupal core among them. Reads need no authentication. Without it, those merge requests can still be worked on, but the issue behind them cannot be read.
+- Paths assume drupal.org's `project/` namespace. Sandboxes live under `sandbox/` instead, so set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for those; `LOACHBOT_GITLAB_HOST` likewise points the scripts at another GitLab.
 
 This skill never clones, never checks anything out and never writes to a branch. It reads the diff and individual files through the API, so it needs no worktree and cannot collide with any other LoachBot run — including one working on the very merge request it is reviewing.
 
@@ -202,7 +203,12 @@ printf '%s\n' "This runs on every request; consider caching it." > /tmp/finding.
 bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <path> <new-line> /tmp/finding.md
 ```
 
-Exit **1** means GitLab rejected the position — most often a context line passed without its old-side line number. Pass the old line as the sixth argument, or move the point into the summary; never retry with a guessed line number, which lands the comment somewhere misleading.
+Exit **1** covers both ways this goes wrong:
+
+- GitLab rejected the position outright — most often a context line passed without its old-side line number. A line that exists on both sides of the diff needs both: pass the old line as the sixth argument. The hunk header (`@@ -4,5 +4,6 @@`) carries the pair.
+- GitLab accepted it but dropped the position, leaving an ordinary thread in the Overview tab rather than a comment on the line. The script checks for this and treats it as a failure, because the API returns `201` either way.
+
+Either way, do not retry with a guessed line number — that lands a comment on the wrong code, which is worse than not commenting. Fix the line pair or move the point into the summary.
 
 Then one summary note, and only one:
 

@@ -42,14 +42,16 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-if ! MR=$(api "projects/project%2F$PROJECT/merge_requests/$IID" 2>/dev/null) ||
+if ! MR=$(api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null) ||
     [ "$(printf '%s' "$MR" | jq -r '.iid // empty')" = "" ]; then
-    echo "cannot read merge request !$IID in project/$PROJECT on $HOST" >&2
+    echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
 
@@ -75,7 +77,7 @@ fi
 
 FILES='[]'
 if RAW_FILES=$(api --paginate \
-    "projects/project%2F$PROJECT/merge_requests/$IID/diffs?per_page=100" 2>/dev/null); then
+    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/diffs?per_page=100" 2>/dev/null); then
     FILES=$(printf '%s' "$RAW_FILES" |
         jq -sc 'add // [] | map({new_path, old_path, new_file, deleted_file, renamed_file})')
 fi

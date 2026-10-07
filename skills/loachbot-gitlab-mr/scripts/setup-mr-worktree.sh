@@ -33,6 +33,8 @@
 set -euo pipefail
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=${1:?project machine name required}
 IID=${2:?merge request iid required}
 
@@ -42,8 +44,8 @@ WT=$BASE.worktrees/mr-$IID
 api() { glab api --hostname "$HOST" "$@"; }
 
 # One read carries the branch pair and the fork's project id; the rest derives from it.
-if ! MR=$(api "projects/project%2F$PROJECT/merge_requests/$IID" 2>/dev/null); then
-    echo "cannot read merge request !$IID in project/$PROJECT on $HOST" >&2
+if ! MR=$(api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null); then
+    echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
 
@@ -62,9 +64,9 @@ if ! FORK_URL=$(api "projects/$SOURCE_ID" 2>/dev/null | jq -r '.ssh_url_to_repo 
     exit 5
 fi
 
-if ! UPSTREAM_URL=$(api "projects/project%2F$PROJECT" 2>/dev/null | jq -r '.ssh_url_to_repo // empty') ||
+if ! UPSTREAM_URL=$(api "projects/$NAMESPACE%2F$PROJECT" 2>/dev/null | jq -r '.ssh_url_to_repo // empty') ||
     [ -z "$UPSTREAM_URL" ]; then
-    echo "cannot read project/$PROJECT on $HOST" >&2
+    echo "cannot read $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
 

@@ -35,16 +35,18 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
+# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
+NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
 NOTES=$(api --paginate \
-    "projects/project%2F$PROJECT/merge_requests/$IID/notes?sort=asc&order_by=created_at" 2>/dev/null)
+    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/notes?sort=asc&order_by=created_at" 2>/dev/null)
 
 if [ "$(printf '%s' "$NOTES" | jq -r 'type')" != "array" ]; then
-    echo "cannot read the notes of !$IID in project/$PROJECT on $HOST" >&2
+    echo "cannot read the notes of !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
 
