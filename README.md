@@ -37,6 +37,7 @@ The two GitLab skills stand apart from that loop — drupal.org has its own revi
    - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
    - `git`
    - For the GitLab skills only: [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), authenticated `glab auth status --hostname git.drupalcode.org`, and [`jq`](https://jqlang.org/)
+   - Also for the GitLab skills, if you work on projects whose issues never moved to GitLab — Drupal core among them: [`drupalorg`](https://github.com/mglaman/drupalorg-cli). Reads need no login.
 
 2. Install every skill with `gh`:
    ```bash
@@ -167,6 +168,14 @@ A run hit something it couldn't resolve autonomously — an unclear task, or CI 
 A reaction works on every kind of feedback. Resolving only applies to inline review threads, so regular Pull Request comments and review summaries would end up with no "already handled" marker at all, and the next run would redo them. Reactions also survive a force-push that can leave a resolved thread stale.
 
 One consequence: 🚀 is reserved. LoachBot runs as you, so it cannot tell its own reaction from one you added yourself — a 🚀 you leave on your own review comment hides that comment from every later run. Use any other emoji for emphasis.
+
+**Do the GitLab skills work on Drupal core, whose issues are still on drupal.org?**
+
+Yes. Contrib mostly had its issue queues migrated into GitLab; core and some others — `eck`, for instance — did not, and keep theirs on drupal.org. The skills check which of the two a project uses and read the issue from the right place, so a core merge request gets reviewed against its real requirement rather than against nothing.
+
+Two consequences worth knowing. Reading a drupal.org-only issue needs the `drupalorg` CLI, and without it the skills stop rather than carry on half-informed — the Fixer's refusal to force-push over an RTBC issue depends on that read. And drupal.org moves issue status through its web UI, with no `/do:` equivalent, so for those projects the skills report what status to set and leave it to you.
+
+The reason they check rather than just trying both: the two numbering spaces overlap. `ai_ckeditor`'s GitLab issue 3615852 is about stale toolbar items, while drupal.org's *node* 3615852 is an unrelated core issue about `ConfigManager`. Asking both and keeping whichever answers would hand back a real, confident, wrong requirement.
 
 **My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 

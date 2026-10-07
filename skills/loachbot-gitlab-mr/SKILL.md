@@ -12,6 +12,7 @@ metadata:
 
 - `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
 - `jq` is on `PATH`. `glab api` has no built-in filter, so the scripts beside this file parse JSON with `jq`.
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab — Drupal core among them. Reads need no authentication. Without it, those merge requests can still be worked on, but the issue behind them cannot be read.
 - SSH access to `git.drupal.org`, which is what pushes to an issue fork use.
 - `~/Projects` is where clones and worktrees go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
 
@@ -74,9 +75,24 @@ Four things here are not what a GitLab habit expects. Each one fails quietly rat
 - **The pipeline runs on the fork.** Ask the target project for it and you get a flat `404`. Use the merge request's `source_project_id`.
 - **A green pipeline can hide red jobs.** `cspell`, `phpcs`, `phpstan` and `stylelint` are `allow_failure: true` in drupal.org's CI template, so the pipeline, the badge and `glab ci status` all report success while those jobs are red. Never trust the rollup; read per-job status.
 
-The workflow state lives on the **issue**, not the merge request: `state::needsWork`, `state::needsReview`, `state::rtbc`. The issue's id is the numeric tail of the fork's path, so `issue/ai_ckeditor-3615852` means issue `3615852` — take the last hyphen-separated field, which keeps working for a project whose machine name contains a hyphen.
+### The issue lives in one of two places
 
-Not every project keeps its issues in GitLab, though. Where they have been migrated — including projects serving them as work items at `/-/work_items/<id>` — the `projects/project%2F<project>/issues/<issue-id>` path reads them. Where they have not, that path returns a flat `404` and the issue exists only on drupal.org; Drupal core itself is in this group. Treat the `404` as "no issue record reachable from here", carry on with the merge request itself, and say so rather than assuming there is no issue.
+Every merge request has an issue behind it, and the fork's path ends in that issue's number — `issue/ai_ckeditor-3615852` means `3615852`, taking the last hyphen-separated field so a project whose machine name contains a hyphen still works. What that number *means*, though, depends on the project:
+
+- **Issues migrated into GitLab** (most of contrib, including the ones served as work items at `/-/work_items/<id>`): the project numbers them itself, and the fork's number is a GitLab issue iid. State lives in `state::needsWork` / `state::needsReview` / `state::rtbc` labels, and `/do:` commands work.
+- **Issues never migrated** (Drupal core and `eck` among them): the queue is on drupal.org only, `projects/project%2F<project>/issues` comes back `[]`, and the fork's number is a drupal.org node id. State is the issue's own status — *Needs review*, *RTBC*, *Fixed* — and there is no `/do:` path, because drupal.org moves state through its web UI.
+
+The two numbering spaces overlap, and that is a trap rather than a convenience: `ai_ckeditor`'s GitLab issue `3615852` is about stale toolbar items, while drupal.org's *node* `3615852` is an unrelated Drupal core issue about `ConfigManager`. Asking both places and keeping whichever answers does not degrade gracefully — it hands back a confident, wrong requirement. So never do that. Decide the world first, from whether the project has GitLab issues at all, then interpret the number:
+
+```bash
+bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
+```
+
+It returns one JSON object either way — `source`, `title`, `status`, `actionable`, `writable`, `url`, `description` — so nothing downstream has to care which world it came from. Read its header for the full shape. Act on its exit code:
+
+- **0** → read. `actionable: false` means the issue is fixed, closed, postponed or already reviewed-and-tested: leave it alone. `writable: false` means `/do:` cannot be posted, so any handback goes to the user instead.
+- **6** → unreadable in the world this project belongs to. Report it; do **not** try the other world.
+- **7** → read, but it belongs to a different project, so the number was interpreted in the wrong world. Report it and discard the result.
 
 For anything about `glab` itself — note bodies, threaded replies, `--field` versus `--raw-field` — defer to the `glab` skill rather than guessing.
 <!-- /SHARED: drupal-gotchas -->
@@ -130,14 +146,16 @@ Act on its exit code:
 - **6** → nobody has answered yet. Skip it.
 - **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip it and mention it to the user.
 
-Skip it when the issue is already `state::rtbc` — somebody is waiting to commit it, and a force-push would reset that. The issue's id is the numeric half of the fork's path, so read it from the merge request's source project rather than parsing the branch name, which contributors do rename:
+Skip it when the issue behind it is already settled — RTBC means somebody is waiting to commit it and a force-push would reset that, and fixed, closed or postponed means it is not yours to pick up. Take the issue's number from the source fork's path rather than the branch name, which contributors do rename, then read it per [The issue lives in one of two places](#the-issue-lives-in-one-of-two-places):
 
 ```bash
-ISSUE_ID=$(glab api --hostname git.drupalcode.org "projects/<source-project-id>" |
+ISSUE_REF=$(glab api --hostname git.drupalcode.org "projects/<source-project-id>" |
     jq -r '.path_with_namespace | split("-") | last')
-glab api --hostname git.drupalcode.org "projects/project%2F<project>/issues/$ISSUE_ID" |
-    jq -r '.labels | join(",")'
+bash <this skill's directory>/scripts/read-issue.sh <project> "$ISSUE_REF" > /tmp/issue.json
+jq -r '"\(.source) \(.status) actionable=\(.actionable) writable=\(.writable)"' /tmp/issue.json
 ```
+
+`actionable: false` → skip this merge request and say which status stopped you. This check is the reason a Drupal core merge request needs `drupalorg` installed: without it the read fails closed with exit **6**, and failing closed is the point — a silently skipped RTBC check is how a rebase lands on top of work somebody was about to commit.
 
 Once you pick one, strip any ` (Needs Info)` suffix from its title and report the URL to the user immediately:
 
@@ -153,8 +171,7 @@ Read the merge request, then the issue behind it — the issue is where the actu
 
 ```bash
 glab mr view <iid> -R git.drupalcode.org/project/<project>
-glab api --hostname git.drupalcode.org "projects/project%2F<project>/issues/<issue-id>" |
-    jq -r '{title, labels, description}'
+jq -r '"\(.title)\n\n\(.description)"' /tmp/issue.json   # written in Step 1
 ```
 
 Maintainer comments are the instructions to trust. Read them, and any answers Step 1 gathered from a parked run, then [fan out](#fan-out) sub-agents to investigate what they refer to — one per question, all in one message, file contents kept out of the main thread.
@@ -240,7 +257,7 @@ EOF
 )"
 ```
 
-If that fails with a `404`, this project's issues are not in GitLab (see [How drupal.org differs](#how-drupalorg-differs)). Do not retry it anywhere else — report the merge request as finished and tell the user to move the issue to needs-review themselves, quoting the `/do:` lines so they can paste them.
+Only when `writable` was `true` in Step 1. A drupal.org-only issue has no `/do:` path at all — its status moves through the web UI — so do not attempt this and do not retry it elsewhere. Report the merge request as finished, link the issue's `url`, and tell the user to set it to *Needs review* themselves.
 
 Then remove the worktree and its local branch — the work is pushed, so nothing is lost:
 

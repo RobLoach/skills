@@ -12,7 +12,7 @@
 #     "merge_request": { iid, title, author, state, draft, source_branch,
 #                        target_branch, source_project_id, web_url, description },
 #     "diff_refs":     { base_sha, start_sha, head_sha },   # inline comments need these
-#     "issue":         { iid, title, labels, state, description } | null,
+#     "issue_ref":     the issue number from the fork's path, or null,
 #     "files":         [ { new_path, old_path, new_file, deleted_file, renamed_file } ],
 #     "jobs":          [ { name, status, allow_failure } ],
 #     "failing_jobs":  [ { name, status, allow_failure } ]
@@ -27,8 +27,8 @@
 # The pipeline belongs to the *source* fork, not the project the merge request targets;
 # asking the target project for it returns 404. The diff itself is read from the target.
 #
-# `issue` is null when the id cannot be derived - a merge request opened from a branch
-# rather than a drupal.org issue fork. Review the diff anyway and say so.
+# `issue_ref` is null when the merge request came from a plain branch rather than a
+# drupal.org issue fork. Review the diff anyway and say so.
 #
 # Exit codes:
 #   0  Context on stdout.
@@ -56,27 +56,21 @@ fi
 SOURCE_ID=$(printf '%s' "$MR" | jq -r '.source_project_id // empty')
 PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
 
-# The issue id is the numeric tail of the fork's path: issue/<project>-<issue-id>. Taking
-# the last hyphen-separated field keeps working for projects whose machine name itself
-# contains a hyphen.
-ISSUE_ID=
+# The issue number is the numeric tail of the fork's path: issue/<project>-<number>.
+# Taking the last hyphen-separated field keeps working for projects whose machine name
+# itself contains a hyphen.
+#
+# Only the number is resolved here. Turning it into an issue is read-issue.sh's job,
+# because what the number means depends on whether this project's queue was migrated
+# into GitLab, and the two numbering spaces overlap - so guessing wrong returns a real
+# but unrelated issue rather than nothing at all.
+ISSUE_REF=null
 if [ -n "$SOURCE_ID" ]; then
-    ISSUE_ID=$(api "projects/$SOURCE_ID" 2>/dev/null |
+    REF=$(api "projects/$SOURCE_ID" 2>/dev/null |
         jq -r 'if (.path_with_namespace // "") | startswith("issue/")
                then (.path_with_namespace | split("-") | last)
                else empty end' || true)
-fi
-
-# Not every drupal.org project keeps its issues in GitLab: for the ones that have not
-# migrated, this 404s and the issue only exists on drupal.org. A `... | jq ... || echo
-# null` fallback would be wrong here - under `pipefail` the failing call still emits the
-# 404 body through jq, so the fallback appends a *second* JSON value and the result
-# parses as neither. Test the read, then convert it.
-ISSUE=null
-if [ -n "$ISSUE_ID" ] &&
-    RAW_ISSUE=$(api "projects/project%2F$PROJECT/issues/$ISSUE_ID" 2>/dev/null) &&
-    [ "$(printf '%s' "$RAW_ISSUE" | jq -r '.iid // empty')" != "" ]; then
-    ISSUE=$(printf '%s' "$RAW_ISSUE" | jq -c '{iid, title, labels, state, description}')
+    [ -n "$REF" ] && ISSUE_REF=$(printf '%s' "$REF" | jq -R .)
 fi
 
 FILES='[]'
@@ -98,7 +92,7 @@ fi
 
 jq -n \
     --argjson mr "$MR" \
-    --argjson issue "$ISSUE" \
+    --argjson issue_ref "$ISSUE_REF" \
     --argjson files "$FILES" \
     --argjson jobs "$JOBS" \
     '{
@@ -106,7 +100,7 @@ jq -n \
                               source_branch, target_branch, source_project_id,
                               web_url, description}),
         diff_refs: ($mr.diff_refs // null),
-        issue: $issue,
+        issue_ref: $issue_ref,
         files: $files,
         jobs: $jobs,
         failing_jobs: ($jobs | map(select(.status == "failed" or .status == "canceled")))
