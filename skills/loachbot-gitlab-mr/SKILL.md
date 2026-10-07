@@ -13,7 +13,7 @@ metadata:
 - `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
 - `jq` is on `PATH`. `glab api` has no built-in filter, so the scripts beside this file parse JSON with `jq`.
 - SSH access to `git.drupal.org`, which is what pushes to an issue fork use.
-- `~/Projects` is where clones and worktrees go by default. It is created if missing, so change it only if the user prefers another directory.
+- `~/Projects` is where clones and worktrees go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
 
 ## Conventions
 
@@ -64,19 +64,27 @@ Sub-agents start empty, so every prompt carries:
 A report is a claim. Verify what matters: read the diff or re-run the command.
 <!-- /SHARED: sub-agents -->
 
+<!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
 
-Five things here are not what a GitLab habit expects. Each one fails quietly rather than loudly, so they are worth knowing before Step 1 rather than after.
+Four things here are not what a GitLab habit expects. Each one fails quietly rather than loudly, so they are worth knowing before the first API call rather than after.
 
 - **Two hostnames, one service.** The API lives at `git.drupalcode.org`; git itself lives at `git.drupal.org`. An API path on the git host and an SSH URL on the API host both fail. Take remote URLs from the API's own `ssh_url_to_repo` instead of composing them.
 - **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in a per-issue fork at `issue/<project>-<issue-id>`. Pushes go to the fork.
 - **The pipeline runs on the fork.** Ask the target project for it and you get a flat `404`. Use the merge request's `source_project_id`.
-- **A green pipeline can hide red jobs.** `cspell`, `phpcs`, `phpstan` and `stylelint` are `allow_failure: true` in drupal.org's CI template, so the pipeline, the badge and `glab ci status` all report success while those jobs are red. Never trust the rollup; read per-job status. This is most of what this skill is for.
-- **`has_conflicts` and `detailed_merge_status` are unreliable.** They sit at `unchecked` indefinitely and never settle, so filtering on them finds nothing and reports "nothing to do" forever. Conflicts are discovered by rebasing locally, which Step 3 does anyway.
+- **A green pipeline can hide red jobs.** `cspell`, `phpcs`, `phpstan` and `stylelint` are `allow_failure: true` in drupal.org's CI template, so the pipeline, the badge and `glab ci status` all report success while those jobs are red. Never trust the rollup; read per-job status.
 
-The workflow state lives on the **issue**, not the merge request: `state::needsWork`, `state::needsReview`, `state::rtbc`. The issue's id is the numeric half of the fork path, so `issue/ai_ckeditor-3615852` means issue `3615852`.
+The workflow state lives on the **issue**, not the merge request: `state::needsWork`, `state::needsReview`, `state::rtbc`. The issue's id is the numeric tail of the fork's path, so `issue/ai_ckeditor-3615852` means issue `3615852` — take the last hyphen-separated field, which keeps working for a project whose machine name contains a hyphen.
+
+Not every project keeps its issues in GitLab, though. Where they have been migrated — including projects serving them as work items at `/-/work_items/<id>` — the `projects/project%2F<project>/issues/<issue-id>` path reads them. Where they have not, that path returns a flat `404` and the issue exists only on drupal.org; Drupal core itself is in this group. Treat the `404` as "no issue record reachable from here", carry on with the merge request itself, and say so rather than assuming there is no issue.
 
 For anything about `glab` itself — note bodies, threaded replies, `--field` versus `--raw-field` — defer to the `glab` skill rather than guessing.
+<!-- /SHARED: drupal-gotchas -->
+
+Two more matter specifically for rebasing:
+
+- **`has_conflicts` and `detailed_merge_status` are unreliable.** They sit at `unchecked` indefinitely and never settle, so filtering on them finds nothing and reports "nothing to do" forever. Conflicts are discovered by rebasing locally, which Step 3 does anyway.
+- **The forgiven lint jobs are most of what this skill is for.** A merge request whose only problem is a red `cspell` looks finished from every angle except the one that counts.
 
 ## Workflow
 
@@ -151,7 +159,7 @@ glab api --hostname git.drupalcode.org "projects/project%2F<project>/issues/<iss
 
 Maintainer comments are the instructions to trust. Read them, and any answers Step 1 gathered from a parked run, then [fan out](#fan-out) sub-agents to investigate what they refer to — one per question, all in one message, file contents kept out of the main thread.
 
-Projects that migrated to GitLab work items serve the same record at `/-/work_items/<id>`; the `issues` API path above still reads it.
+Not every project keeps its issues in GitLab. Where they have been migrated — including projects serving them as work items at `/-/work_items/<id>` — the `issues` API path above reads them. Where they have not, that path returns a flat `404` and the issue exists only on drupal.org; Drupal core itself is in this group. Treat the `404` as "no issue record here", review the merge request on its own terms, and tell the user you could not read the issue rather than assuming there isn't one.
 
 ### 3. Rebase it
 
@@ -232,6 +240,8 @@ EOF
 )"
 ```
 
+If that fails with a `404`, this project's issues are not in GitLab (see [How drupal.org differs](#how-drupalorg-differs)). Do not retry it anywhere else — report the merge request as finished and tell the user to move the issue to needs-review themselves, quoting the `/do:` lines so they can paste them.
+
 Then remove the worktree and its local branch — the work is pushed, so nothing is lost:
 
 ```bash
@@ -246,9 +256,9 @@ Report the merge request URL to the user:
 
 ## Rules
 
-- Work on exactly one merge request per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — one run at a time, never two runs at once — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/push/handback steps.
+- Work on exactly one merge request per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a just-finished merge request still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/push/handback steps.
 - Push to the `fork` remote, never to `upstream`. A drupal.org project's branches are not yours to rewrite, and `--force-with-lease` is the only acceptable force.
-- Only one LoachBot skill at a time may run against a given repository. They all share a base clone, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another. This bounds whole runs against one repository — not the sub-agents within a run, which fan out per [Fan out](#fan-out).
+- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — this skill clones to `~/Projects/drupalcode/<project>`, so it can never collide with a GitHub LoachBot run at `~/Projects/<owner>/<repo>`, and the two may run side by side. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
 - All git operations for a merge request must run inside that merge request's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Never post comments except the one question that parks a merge request (Step 5) and the handback (Step 6).
 - Never set `state::rtbc`, and never merge. Review and commit belong to the project's maintainers.

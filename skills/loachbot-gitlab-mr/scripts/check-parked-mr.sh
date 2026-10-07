@@ -4,6 +4,11 @@
 #
 # Usage: bash scripts/check-parked-mr.sh <project> <mr-iid>
 #
+# loachbot-github-issue/scripts/check-parked.sh is the GitHub half of this, with the
+# same comment-then-rename invariant and the same 0/5/6 contract. It cannot share this
+# file - one speaks `gh`, the other `glab` - so nothing in CI catches the two drifting
+# apart. Change the parking logic in one and change it in the other.
+#
 # A parking run comments first and renames second, so the parking rename is the newest
 # event it leaves behind. A reply is anything posted after that rename.
 #

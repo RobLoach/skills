@@ -8,6 +8,7 @@ A collection of AI agent skills focused on developing and maintaining open-sourc
 - [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
 - [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
 - [GitLab Merge Request Fixer](#gitlab-merge-request-fixer): Rebases one drupal.org merge request and makes every CI job green
+- [GitLab Merge Request Reviewer](#gitlab-merge-request-reviewer): Reviews one drupal.org merge request and posts its findings inline
 
 ## The loop
 
@@ -27,7 +28,7 @@ You               merge it
 
 Nothing moves without you: the Planner files only the issues you approve, and a Pull Request only reaches the PR Fixer once you have reviewed it and set it back to **Draft**. Merging is always yours.
 
-The GitLab Merge Request Fixer stands apart from that loop — drupal.org has its own review workflow, driven by `state::` labels on the issue rather than by draft status — but the same bargain holds: it hands the merge request back for review and never merges it.
+The two GitLab skills stand apart from that loop — drupal.org has its own review workflow, driven by `state::` labels on the issue rather than by draft status — but the same bargain holds: the Fixer hands a merge request back for review, the Reviewer hands it back for work, and neither one merges or marks anything ready to commit.
 
 ## Installation
 
@@ -35,7 +36,7 @@ The GitLab Merge Request Fixer stands apart from that loop — drupal.org has it
    - Coding agent like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
    - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
    - `git`
-   - For the GitLab Merge Request Fixer only: [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), authenticated `glab auth status --hostname git.drupalcode.org`, and [`jq`](https://jqlang.org/)
+   - For the GitLab skills only: [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), authenticated `glab auth status --hostname git.drupalcode.org`, and [`jq`](https://jqlang.org/)
 
 2. Install every skill with `gh`:
    ```bash
@@ -47,7 +48,7 @@ The GitLab Merge Request Fixer stands apart from that loop — drupal.org has it
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
 
-Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr`, `/loachbot-gitlab-mr` — on agents that support them.
+Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr`, `/loachbot-gitlab-mr`, `/loachbot-gitlab-review` — on agents that support them.
 
 ## Skills
 
@@ -108,6 +109,23 @@ Run LoachBot MRs
 Run LoachBot MRs until there aren't any left
 ```
 
+### GitLab Merge Request Reviewer
+
+Reviews one [drupal.org](https://www.drupal.org) merge request — yours or somebody else's — against the issue it claims to fix and against Drupal's own conventions, then posts its findings as resolvable inline threads plus a single summary.
+
+It starts from the issue rather than the code, because the most common real finding is scope: something the diff does that nobody asked for, or something the issue asked for that the diff never does. It also reads the pipeline per job, so a merge request sitting on a red `cspell` behind a green badge gets called out.
+
+Entirely read-only against git — no clone, no checkout, no push — so it can run alongside anything else, including the Fixer working on the same merge request. It will set `state::needsWork` when a finding genuinely blocks, and it will never approve, merge, or set `state::rtbc`.
+
+**Examples:**
+
+```
+Review https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23
+What's wrong with ai_image_crop!14?
+Run LoachBot Review
+Review the merge requests waiting on me
+```
+
 ## Update
 
 To update them, use `gh`:
@@ -119,8 +137,8 @@ gh skills update --all
 
 The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for the GitLab skill — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The GitLab skill reads `LOACHBOT_PROJECTS_DIR` if you would rather not edit anything.
-- **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skill additionally follows drupal.org's `Issue #<id>: <description>` convention.
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for the GitLab Fixer — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. Set `LOACHBOT_PROJECTS_DIR` to put all of that somewhere else. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The Reviewer never clones at all.
+- **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab Fixer additionally follows drupal.org's `Issue #<id>: <description>` convention.
 
 The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
 
@@ -150,13 +168,13 @@ A reaction works on every kind of feedback. Resolving only applies to inline rev
 
 One consequence: 🚀 is reserved. LoachBot runs as you, so it cannot tell its own reaction from one you added yourself — a 🚀 you leave on your own review comment hides that comment from every later run. Use any other emoji for emphasis.
 
-**My drupal.org pipeline is green. Why does the GitLab skill say a job failed?**
+**My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 
-Because the pipeline is lying, and that is the one thing this skill is built to notice. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` `allow_failure: true`, which means the job can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red. The skill reads per-job status and reports those as failures, marked `(allow_failure)` so you can see which they are.
+Because the pipeline is lying, and noticing that is half of why these two exist. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` `allow_failure: true`, which means the job can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red. Both skills read per-job status and report those as failures, marked so you can see which ones the pipeline was forgiving — the Fixer fixes them, the Reviewer raises them as findings.
 
 **Can I point it at a single repository?**
 
-Yes — name the repo and both fixers scope their search to it, e.g. "run LoachBot Issues on RobLoach/skills". Asking from inside a checkout ("fix the next issue on this project") works too. With no repo named, they search your whole account.
+Yes — name the repo and the fixers scope their search to it, e.g. "run LoachBot Issues on RobLoach/skills". Asking from inside a checkout ("fix the next issue on this project") works too. With no repo named, they search your whole account. The GitLab skills take a merge request URL or an `ai_ckeditor!23` reference directly, which is usually quicker than letting them search.
 
 ## License
 
