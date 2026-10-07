@@ -31,11 +31,25 @@ Spin one up when any one of these holds:
 - A question needs more than two searches.
 - A change needs more than one sentence to describe.
 - You would run a build, tests or a linter and react to the output.
-- Two pieces of work are independent — launch them in one message so they run concurrently.
 
 Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
 
 Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
+
+### Fan out
+
+Independent work goes out in one message, not one after another.
+
+Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
+
+The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
+
+What does have to stay sequential:
+
+- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
+- A sub-agent whose prompt needs an earlier one's answer.
+
+Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -174,8 +188,8 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 ## Rules
 
 - Never push branches, open PRs, or edit the project's code while planning. Step 2 resets the clone to the remote default branch; nothing beyond that is written, and nothing is written to the remote.
-- Only one LoachBot skill at a time may run against a given repository. Step 2 resets the base clone at `~/Projects/<owner>/<repo>`, which the two fixer skills build their worktrees from, so a concurrent run there would be pulled out from under them. If the user asks for overlapping runs, do them one after another.
+- Only one LoachBot skill at a time may run against a given repository. Step 2 resets the base clone at `~/Projects/<owner>/<repo>`, which the fixer skills build their worktrees from, so a concurrent run there would be pulled out from under them. If the user asks for overlapping runs, do them one after another. This bounds whole runs against one repository — not the sub-agents within a run, which fan out per [Fan out](#fan-out).
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."
-- Delegate the step-3 gathering per [Sub-agents](#sub-agents); reserve the main thread for plan synthesis and the approve/file steps.
+- Delegate the step-3 gathering per [Sub-agents](#sub-agents), launching the independent reads together rather than in sequence; reserve the main thread for plan synthesis and the approve/file steps.

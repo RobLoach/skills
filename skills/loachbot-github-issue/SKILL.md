@@ -35,11 +35,25 @@ Spin one up when any one of these holds:
 - A question needs more than two searches.
 - A change needs more than one sentence to describe.
 - You would run a build, tests or a linter and react to the output.
-- Two pieces of work are independent — launch them in one message so they run concurrently.
 
 Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
 
 Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
+
+### Fan out
+
+Independent work goes out in one message, not one after another.
+
+Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
+
+The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
+
+What does have to stay sequential:
+
+- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
+- A sub-agent whose prompt needs an earlier one's answer.
+
+Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -223,9 +237,9 @@ Then report the completed PR URL to the user:
 
 ## Rules
 
-- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — sequentially, never in parallel — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration and the git/PR/un-assign steps.
+- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — one run at a time, never two runs at once — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
-- Only one LoachBot skill at a time may run against a given repository. All three share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another.
+- Only one LoachBot skill at a time may run against a given repository. They all share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another. This bounds whole runs against one repository — not the sub-agents within a run, which fan out per [Fan out](#fan-out).
 - Keep commit messages to one concise line, following your global commit conventions.
 - Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"
