@@ -7,6 +7,11 @@
 #
 # Usage: bash scripts/check-parked.sh <owner> <repo> <number> [pr]
 #
+# loachbot-gitlab-mr/scripts/check-parked-mr.sh is the GitLab half of this, with the
+# same comment-then-rename invariant and the same 0/5/6 contract. It cannot share this
+# file - one speaks `gh`, the other `glab` - so nothing in CI catches the two drifting
+# apart. Change the parking logic in one and change it in the other.
+#
 # A parking run comments first and renames second, so the parking rename is the
 # newest event it leaves behind. The most recent one wins: an item can be parked,
 # answered and re-parked any number of times. A reply is anything posted after that

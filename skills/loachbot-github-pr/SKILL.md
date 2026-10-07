@@ -13,7 +13,7 @@ metadata:
 ## Prerequisites
 
 - `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` is where clones and worktrees go by default. It is created if missing, so change it only if the user prefers another directory.
+- `~/Projects` is where clones and worktrees go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
 <!-- /SHARED: prerequisites -->
 
 <!-- SHARED: conventions -->
@@ -237,8 +237,8 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 
 ## Rules
 
-- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run — one run at a time, never two runs at once — and stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/reaction/ready steps.
+- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a PR just marked ready still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/reaction/ready steps.
 - Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
-- Only one LoachBot skill at a time may run against a given repository. They all share the base clone at `~/Projects/<owner>/<repo>`, and a concurrent run fetching, deleting branches or resetting it underneath you will corrupt this one. If the user asks for overlapping runs, do them one after another. This bounds whole runs against one repository — not the sub-agents within a run, which fan out per [Fan out](#fan-out).
+- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — including a `loachbot-gitlab-mr` run, which clones to `~/Projects/drupalcode/<project>` and so can never collide with a GitHub one at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
 - Keep commit messages to one concise line, following your global commit conventions.

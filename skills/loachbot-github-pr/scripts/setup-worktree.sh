@@ -29,8 +29,9 @@ OWNER=$1
 REPO=$2
 NUMBER=$3
 
-BASE="$HOME/Projects/$OWNER/$REPO"
-WT="$HOME/Projects/$OWNER/$REPO.worktrees/pr-$NUMBER"
+PROJECTS=${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}
+BASE="$PROJECTS/$OWNER/$REPO"
+WT="$PROJECTS/$OWNER/$REPO.worktrees/pr-$NUMBER"
 
 if [ ! -d "$BASE" ]; then
     gh repo clone "$OWNER/$REPO" "$BASE" -- --recurse-submodules
