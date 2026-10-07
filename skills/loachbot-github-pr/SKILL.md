@@ -27,7 +27,7 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
 
 Spin one up when any one of these holds:
 

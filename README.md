@@ -7,10 +7,11 @@ A collection of AI agent skills focused on developing and maintaining open-sourc
 - [GitHub Planner](#github-planner): Creates issues aligned with project goals
 - [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
 - [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
+- [GitLab Merge Request Fixer](#gitlab-merge-request-fixer): Rebases one drupal.org merge request and makes every CI job green
 
 ## The loop
 
-The three skills chain together through GitHub itself — self-assignment is the handoff, and you are the review step in the middle:
+The three GitHub skills chain together through GitHub itself — self-assignment is the handoff, and you are the review step in the middle:
 
 ```
 Planner       files the issues you approve, assigned to you
@@ -26,24 +27,27 @@ You               merge it
 
 Nothing moves without you: the Planner files only the issues you approve, and a Pull Request only reaches the PR Fixer once you have reviewed it and set it back to **Draft**. Merging is always yours.
 
+The GitLab Merge Request Fixer stands apart from that loop — drupal.org has its own review workflow, driven by `state::` labels on the issue rather than by draft status — but the same bargain holds: it hands the merge request back for review and never merges it.
+
 ## Installation
 
 1. Ensure you have the dependencies available:
    - Coding agent like [OpenCode](https://opencode.ai/) or [Claude Code](https://claude.com/claude-code)
    - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated `gh auth status`
    - `git`
+   - For the GitLab Merge Request Fixer only: [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), authenticated `glab auth status --hostname git.drupalcode.org`, and [`jq`](https://jqlang.org/)
 
-2. Install all three skills with `gh`:
+2. Install every skill with `gh`:
    ```bash
    gh skills install robloach/skills --scope user --agent claude-code --all
    ```
-   `--all` takes all three without prompting, and `--scope user` makes them available in every project rather than just the current one. Swap `--agent` for whichever agent you use — `gh skills install --help` lists the supported values, including `opencode`, `codex`, `cursor` and `github-copilot`.
+   `--all` takes all of them without prompting, and `--scope user` makes them available in every project rather than just the current one. Swap `--agent` for whichever agent you use — `gh skills install --help` lists the supported values, including `opencode`, `codex`, `cursor` and `github-copilot`.
 
    Or install by hand: copy each `skills/<name>/` folder — `SKILL.md` and the files beside it — into your agent's skills directory, such as `~/.claude/skills/`.
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
 
-Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr` — on agents that support them.
+Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr`, `/loachbot-gitlab-mr` — on agents that support them.
 
 ## Skills
 
@@ -87,6 +91,23 @@ Address the feedback on my recent pull request
 Run LoachBot Pull Requests until there aren't any left
 ```
 
+### GitLab Merge Request Fixer
+
+Takes one of your open [drupal.org](https://www.drupal.org) merge requests, rebases it onto its target branch in a dedicated worktree, resolves what it safely can, and then makes **every** CI job green before handing the issue back for review with `/do:` commands.
+
+The emphasis on *every* is the point. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` as `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. This skill reads per-job status instead of the rollup and treats a forgiven failure as a failure.
+
+Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers.
+
+**Examples:**
+
+```
+Rebase https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23
+Fix the merge conflicts and pipeline on ai_image_crop!14
+Run LoachBot MRs
+Run LoachBot MRs until there aren't any left
+```
+
 ## Update
 
 To update them, use `gh`:
@@ -98,8 +119,8 @@ gh skills update --all
 
 The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone location**: base clones go in `~/Projects/<owner>/<repo>`, and each issue or Pull Request gets a throwaway worktree beside it in `~/Projects/<owner>/<repo>.worktrees/`, removed once the run finishes. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch.
-- **Commit style**: inherited from your global settings, for both commit messages and attribution
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for the GitLab skill — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The GitLab skill reads `LOACHBOT_PROJECTS_DIR` if you would rather not edit anything.
+- **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skill additionally follows drupal.org's `Issue #<id>: <description>` convention.
 
 The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
 
@@ -128,6 +149,10 @@ A run hit something it couldn't resolve autonomously — an unclear task, or CI 
 A reaction works on every kind of feedback. Resolving only applies to inline review threads, so regular Pull Request comments and review summaries would end up with no "already handled" marker at all, and the next run would redo them. Reactions also survive a force-push that can leave a resolved thread stale.
 
 One consequence: 🚀 is reserved. LoachBot runs as you, so it cannot tell its own reaction from one you added yourself — a 🚀 you leave on your own review comment hides that comment from every later run. Use any other emoji for emphasis.
+
+**My drupal.org pipeline is green. Why does the GitLab skill say a job failed?**
+
+Because the pipeline is lying, and that is the one thing this skill is built to notice. Drupal.org's CI template marks `cspell`, `phpcs`, `phpstan` and `stylelint` `allow_failure: true`, which means the job can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red. The skill reads per-job status and reports those as failures, marked `(allow_failure)` so you can see which they are.
 
 **Can I point it at a single repository?**
 
