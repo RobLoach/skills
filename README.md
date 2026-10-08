@@ -209,7 +209,7 @@ The *GitLab Issue Fixer* parks the same way but without touching the title, sinc
 
 No, and it can't. Credit comes from an attribution record on drupal.org itself — there is no `/do:` command for it and no API, only a page the DrupalBot comment links to. A merge request that gets committed without one earns you nothing for the work.
 
-So the *GitLab Issue Fixer* ends every run with a todo list, and that link is always the first item on it. The same list carries anything else only you can close out: reviewing the merge request, any template checklist box the run left unticked, and anything it noticed but deliberately kept out of the diff. Treat it as the handover rather than a formality — the run is finished, your part isn't.
+So the *GitLab Issue Fixer* ends every run by telling you, as the first item on a todo list. The same list carries anything else only you can close out: reviewing the merge request, any template checklist box the run left unticked, and anything it noticed but deliberately kept out of the diff. It is a list in the reply, not a comment on the issue — the run writes to drupal.org only when the workflow calls for it. Treat it as the handover rather than a formality: the run is finished, your part isn't.
 
 **Why does it react with 🚀 instead of resolving my review comments?**
 

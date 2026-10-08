@@ -431,19 +431,11 @@ git branch -D issue-<issue-iid>
 
 A finished run still leaves work only a human can do, and none of it is visible from the merge request. Close by reporting the links, the summary you posted, and a todo list of exactly that.
 
-**Contribution credit is always on the list.** Drupal.org grants credit from an attribution record, which has no `/do:` command and no API — it is a page on the website, so the skill cannot fill it in and a merge request that gets committed without it earns you nothing. Drupalbot links the right one from its "Issue tools" comment; take the link from there rather than composing it:
+This step writes nothing to drupal.org. Everything here goes to the user, in your reply.
 
-```bash
-glab api --hostname git.drupalcode.org --paginate \
-    "projects/<namespace>%2F<project>/issues/<issue-iid>/notes" |
-    jq -r '[.[] | select(.author.username == "drupalbot") | .body
-            | scan("https://new\\.drupal\\.org/contribution-record\\?source_link=[^\"]+")]
-           | first // empty'
-```
+**Contribution credit is always on the list.** Drupal.org grants credit from an attribution record, which has no `/do:` command and no API — it is a page on the website, reached from the "Issue tools" link drupalbot leaves on every issue. The skill cannot fill it in, and a merge request that gets committed without one earns the user nothing for the work. So it goes on the list every run, as a todo rather than as anything to go and do.
 
-If that comes back empty, say the attribution page could not be found rather than guessing a URL.
-
-Then report it all, as a list the user can work down:
+Report it all, as a list the user can work down:
 
 > Done: https://git.drupalcode.org/project/\<project\>/-/merge_requests/\<mr-iid\>
 > Issue: https://git.drupalcode.org/project/\<project\>/-/work_items/\<issue-iid\>
@@ -451,7 +443,7 @@ Then report it all, as a list the user can work down:
 > \<the summary you posted on the issue\>
 >
 > **Over to you:**
-> - [ ] Record your contribution for credit: \<the attribution link\>
+> - [ ] Record your contribution for credit, from the issue's "Issue tools" links
 > - [ ] Review the merge request — nobody else has looked at it yet
 > - \<one line per template checklist item you left unticked, saying what it needs\>
 > - \<one line per thing you noticed and deliberately left out of scope\>
@@ -468,7 +460,7 @@ Keep the list to things that are actually outstanding. Padding it with items you
 - Never rewrite or revert another contributor's commits on a shared issue branch. If their work conflicts with yours, that is a Step 8 park.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — this skill clones to `~/Projects/drupalcode/<project>`, the same place `loachbot-gitlab-mr` does, so those two must not run against the same project at once. A GitHub LoachBot run at `~/Projects/<owner>/<repo>` can never collide with either. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
-- Post exactly the comments this workflow calls for: the claim, the fork and access commands the scripts post, one parking question, and one handback. Nothing else.
+- Post exactly the comments this workflow calls for and no others: the claim, the un-park when resuming a blocked issue, the fork and access commands the scripts post, one parking question, and one handback. Step 10's todo list is not among them — it is reported to the user, not to the issue.
 - A run ends in exactly one of two states, and never in between: parked, assigned to you with `state::blocked` and a question; or handed back, unassigned with `state::needsReview` and a merge request. An issue left claimed with neither is an unfinished run, which is what Step 1 picks up as a `resume`.
 - Every merge request discloses that it was AI-generated — through the project's own template section where there is one, and the `AI-Generated:` line otherwise. Drupal.org requires it, and a contribution without it is one a maintainer may decline on that basis alone.
 - Never tick a checklist box you did not earn. An unticked box tells a reviewer where to look; a wrongly ticked one tells them a lie, and it is the fastest way to lose a maintainer's trust in everything else the run claims.
