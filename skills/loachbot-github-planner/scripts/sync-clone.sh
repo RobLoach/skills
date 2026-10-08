@@ -25,7 +25,7 @@ fi
 
 OWNER=$1
 REPO=$2
-BASE="$HOME/Projects/$OWNER/$REPO"
+BASE="${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/$OWNER/$REPO"
 
 if [ ! -d "$BASE" ]; then
     gh repo clone "$OWNER/$REPO" "$BASE" -- --recurse-submodules

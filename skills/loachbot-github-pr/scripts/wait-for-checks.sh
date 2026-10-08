@@ -24,8 +24,19 @@
 # ATTEMPTS, INTERVAL and EMPTY_PROBES can be overridden from the environment to
 # shorten the wait; the defaults below bound it at roughly 30 minutes.
 #
+# A step marked `continue-on-error: true` fails without failing its job, so the job's
+# conclusion - and therefore the rollup, and therefore `gh pr checks` - stays green. The
+# step's own conclusion is the only place the failure shows, so those are collected and
+# printed separately once the rollup settles.
+#
+# Unlike drupal.org's `allow_failure`, which a shared CI template imposes on every
+# project, `continue-on-error` is hand-written by whoever owns the workflow and usually
+# means "this is known to be noisy". So these are reported, not treated as failures: the
+# exit code is unchanged by them, and a human decides whether one matters.
+#
 # Exit codes:
-#   0  Checks passed, or the repository has no CI at all.
+#   0  Checks passed, or the repository has no CI at all. Soft-failed steps, if any, are
+#      listed first - passing here means the rollup is green, not that nothing failed.
 #   8  Still pending after the full wait. Leave the item alone; a later run will see
 #      the settled result.
 #   7  The check status could not be read at all (API failure, unexpected output).
@@ -102,6 +113,30 @@ for _ in $(seq "$ATTEMPTS"); do
     [ "$STATUS" -eq 8 ] || break
     sleep "$INTERVAL"
 done
+
+# Steps that failed inside a job that still succeeded: `continue-on-error` swallowed
+# them. Only worth looking up once the rollup has settled, and never fatal on its own.
+SOFT=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null |
+    while read -r SHA; do
+        [ -n "$SHA" ] || continue
+        gh api "repos/$OWNER/$REPO/actions/runs?head_sha=$SHA&per_page=50" \
+            --jq '.workflow_runs[].id' 2>/dev/null |
+            while read -r RUN_ID; do
+                # shellcheck disable=SC2016  # $job is a jq binding, not a shell one.
+                gh api "repos/$OWNER/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+                    --jq '.jobs[]
+                          | select(.conclusion == "success")
+                          | .name as $job
+                          | .steps[]?
+                          | select(.conclusion == "failure")
+                          | "  \($job) > \(.name)"' 2>/dev/null
+            done
+    done)
+
+if [ -n "$SOFT" ]; then
+    echo "soft-failed steps (continue-on-error, so the checks above stayed green):" >&2
+    printf '%s\n' "$SOFT" >&2
+fi
 
 printf '%s\n' "$OUTPUT"
 exit "$STATUS"
