@@ -112,11 +112,15 @@ Run LoachBot Pull Requests until there aren't any left
 
 Picks up one open [drupal.org](https://www.drupal.org) issue you reported, claims it by commenting `/do:assign me`, implements the fix on the issue's shared fork, opens a merge request, then unassigns itself and sets `state::needsReview` with a short summary of what it did. Claim and handback both go through drupalbot's `/do:` commands rather than the API, so they work the same whether or not you hold a role on the project.
 
-Drupal.org does not work the way a GitHub habit expects, and most of this skill is about the difference. There are no personal forks: every issue has one shared fork at `issue/<project>-<id>` that everybody working the issue pushes to, so the skill continues whatever branch is already there rather than starting its own. Creating that fork and getting push access are not API calls — a contributor who isn't a project member can do neither — so it asks drupalbot with `/do:fork` and `/do:access` and waits. And every merge request it opens carries an `AI-Generated:` line, because [drupal.org requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) and a contribution without it can be declined on that basis alone.
+Drupal.org does not work the way a GitHub habit expects, and most of this skill is about the difference. There are no personal forks: every issue has one shared fork at `issue/<project>-<id>` that everybody working the issue pushes to, so the skill continues whatever branch is already there rather than starting its own. Creating that fork and getting push access are not API calls — a contributor who isn't a project member can do neither — so it asks drupalbot, reacting `:heavy_plus_sign:` to the fork-created note where that will do and falling back to `/do:access` where it won't.
+
+Disclosure is handled the way each project asks for it. Drupal.org [requires AI-generated contributions to say so](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal), and a project with a merge request template usually has a section for it — `project/ai` asks you to pick between *AI Assisted Code*, *AI Generated Code* and *Vibe Coded*. So the skill reads `.gitlab/merge_request_templates/` first and fills the project's own form in, ticking *AI Generated Code*, rather than writing its own description over the top of it. Projects without a template get a plain description and an `AI-Generated:` line. Checklist items it cannot honestly tick are left unticked and reported to you instead.
 
 It only claims issues **you reported**, unless you name one directly — self-assigning into somebody else's queue uninvited is not a call a bot gets to make. It skips anything that already has an open merge request, which is the *Merge Request Fixer's* work below, and it skips anything already at `state::needsReview`, `state::rtbc` or beyond.
 
 Projects whose issue queue never moved to GitLab — Drupal core among them — are out of scope here, since `/do:assign me` exists nowhere else.
+
+Each run ends with a todo list of what it could not do for you: recording your contribution credit, reviewing the merge request, any checklist box left unticked, anything it noticed and left out of scope.
 
 **Examples:**
 
@@ -174,7 +178,8 @@ The skills bake in a few defaults, so feel free to bend them to your own workflo
 
 - **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for both GitLab Fixers, which is why those two must not run against the same project at once — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. Set `LOACHBOT_PROJECTS_DIR` to put all of that somewhere else. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The Reviewer never clones at all.
 - **Namespace and host**: the GitLab skills assume drupal.org's `project/` namespace at `git.drupalcode.org`. `LOACHBOT_GITLAB_NAMESPACE` and `LOACHBOT_GITLAB_HOST` override both — use `sandbox` for a drupal.org sandbox project, or point them at another GitLab entirely.
-- **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skills additionally follow drupal.org's `Issue #<id>: <description>` convention, and the GitLab Issue Fixer adds the `AI-Generated:` disclosure drupal.org requires on every merge request it opens. That last one is policy rather than preference — bending it costs the contribution its credit.
+- **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skills additionally follow drupal.org's `Issue #<id>: <description>` convention.
+- **Merge request descriptions**: the GitLab Issue Fixer prefers the target project's own `.gitlab/merge_request_templates/` over any format of its own, so a project that asks for testing instructions and an AI disclosure gets them in the sections it asked for. The AI disclosure is policy rather than preference — bending it costs the contribution its credit.
 
 The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
 
@@ -199,6 +204,12 @@ Your skills directory can get messy, so I've opted to namespace these as `loachb
 A run hit something it couldn't resolve autonomously — an unclear task, or CI failures needing human judgment — so it parked the item and stopped. It posts a comment saying what it needs before parking, so start there. Reply with a comment answering it; the next run sees your reply, restores the title, and resumes with your answer as context. Parked items are skipped until someone replies.
 
 The *GitLab Issue Fixer* parks the same way but without touching the title, since a drupal.org issue is usually somebody else's to name: it adds `state::blocked` instead, and removes it again once you reply. If you apply `state::blocked` yourself it will leave that issue alone entirely — there is no question of its own to measure your reply against.
+
+**Does it record my drupal.org contribution credit?**
+
+No, and it can't. Credit comes from an attribution record on drupal.org itself — there is no `/do:` command for it and no API, only a page the DrupalBot comment links to. A merge request that gets committed without one earns you nothing for the work.
+
+So the *GitLab Issue Fixer* ends every run with a todo list, and that link is always the first item on it. The same list carries anything else only you can close out: reviewing the merge request, any template checklist box the run left unticked, and anything it noticed but deliberately kept out of the diff. Treat it as the handover rather than a formality — the run is finished, your part isn't.
 
 **Why does it react with 🚀 instead of resolving my review comments?**
 
