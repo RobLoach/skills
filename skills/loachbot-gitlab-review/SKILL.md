@@ -207,6 +207,8 @@ Exit **1** covers both ways this goes wrong:
 
 Either way, do not retry with a guessed line number — that lands a comment on the wrong code, which is worse than not commenting. Fix the line pair or move the point into the summary.
 
+Exit **5** means the merge request could not be read at all this time, even though Step 2 managed it — so almost always a transient API failure rather than anything about the position. Retry that one comment once; if it fails again, move the point into the summary and say there that the inline comment could not be posted.
+
 Then one summary note, and only one:
 
 ```bash

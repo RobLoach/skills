@@ -60,6 +60,8 @@ The same bargain holds, and rather more firmly: none of the three merges, approv
    ```
    `--all` takes all of them without prompting, and `--scope user` makes them available in every project rather than just the current one. Swap `--agent` for whichever agent you use — `gh skills install --help` lists the supported values, including `opencode`, `codex`, `cursor` and `github-copilot`.
 
+   `gh skills` is in preview and its flags can change without notice, so check `--help` if a command above stops matching your `gh`.
+
    Or install by hand: copy each `skills/<name>/` folder — `SKILL.md` and the files beside it — into your agent's skills directory, such as `~/.claude/skills/`.
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
@@ -191,7 +193,9 @@ Every skill is checked on push and pull request by [`.github/workflows/validate.
 python3 .github/scripts/validate-skills.py
 ```
 
-It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, checks that shared-marked scripts and sections match across skills, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
+It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, checks that shared-marked scripts and sections match across skills, holds each script's documented exit codes to the ones it really raises *and* to the ones its `SKILL.md` tells the agent to act on, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
+
+[`AGENTS.md`](AGENTS.md) writes down the invariants behind those checks, plus the conventions CI cannot check. Worth reading before adding a skill — by a person or an agent.
 
 ## FAQ
 
