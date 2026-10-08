@@ -21,8 +21,12 @@
 # but `sleep` - no GNU `timeout`, which is absent on stock macOS. Only the settled
 # result is printed: echoing every poll would bury the caller in repeat tables.
 #
-# ATTEMPTS, INTERVAL and EMPTY_PROBES can be overridden from the environment to
-# shorten the wait; the defaults below bound it at roughly 30 minutes.
+# LOACHBOT_CHECKS_ATTEMPTS, LOACHBOT_CHECKS_INTERVAL and LOACHBOT_CHECKS_EMPTY_PROBES
+# can be overridden from the environment to shorten the wait; the defaults below bound it
+# at roughly 30 minutes. They carry the LOACHBOT_ prefix every other knob in these skills
+# uses, and for the same reason: a bare INTERVAL or ATTEMPTS in the caller's environment
+# would silently retune the wait, and a wait cut short reports CI as pending - or as
+# having no CI at all - on a repository that was merely slow.
 #
 # A step marked `continue-on-error: true` fails without failing its job, so the job's
 # conclusion - and therefore the rollup, and therefore `gh pr checks` - stays green. The
@@ -54,11 +58,11 @@ OWNER=$1
 REPO=$2
 NUMBER=$3
 
-ATTEMPTS=${ATTEMPTS:-30}
-INTERVAL=${INTERVAL:-60}
+ATTEMPTS=${LOACHBOT_CHECKS_ATTEMPTS:-30}
+INTERVAL=${LOACHBOT_CHECKS_INTERVAL:-60}
 # Consecutive empty rollups that together mean "this repository really has no CI",
 # rather than "the workflow has not appeared yet".
-EMPTY_PROBES=${EMPTY_PROBES:-3}
+EMPTY_PROBES=${LOACHBOT_CHECKS_EMPTY_PROBES:-3}
 
 # A per-run temp file: two runs against different repositories may overlap, and a
 # fixed /tmp path would have them reading each other's stderr - or collide outright

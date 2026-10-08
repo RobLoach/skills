@@ -4,10 +4,14 @@
 #
 # Usage: bash scripts/check-parked-mr.sh <project> <mr-iid>
 #
-# loachbot-github-issue/scripts/check-parked.sh is the GitHub half of this, with the
-# same comment-then-rename invariant and the same 0/5/6 contract. It cannot share this
-# file - one speaks `gh`, the other `glab` - so nothing in CI catches the two drifting
-# apart. Change the parking logic in one and change it in the other.
+# loachbot-github-issue/scripts/check-parked.sh and its loachbot-github-pr copy are the
+# GitHub half of this, with the same comment-then-rename invariant and the same 0/5/6
+# contract. They cannot share this file - one speaks `gh`, the other `glab` - so nothing
+# in CI catches them drifting apart. Change the parking logic in one and change it there.
+#
+# loachbot-gitlab-issue/scripts/check-parked-issue.sh keeps the same contract but parks
+# with a `state::blocked` label rather than a rename, because an issue in somebody else's
+# queue is not a title to rewrite. That difference is deliberate; do not sync it here.
 #
 # A parking run comments first and renames second, so the parking rename is the newest
 # event it leaves behind. A reply is anything posted after that rename.

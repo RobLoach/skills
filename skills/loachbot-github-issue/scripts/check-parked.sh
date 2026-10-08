@@ -7,10 +7,16 @@
 #
 # Usage: bash scripts/check-parked.sh <owner> <repo> <number> [pr]
 #
-# loachbot-gitlab-mr/scripts/check-parked-mr.sh is the GitLab half of this, with the
-# same comment-then-rename invariant and the same 0/5/6 contract. It cannot share this
-# file - one speaks `gh`, the other `glab` - so nothing in CI catches the two drifting
-# apart. Change the parking logic in one and change it in the other.
+# Two sibling scripts answer this same question elsewhere, and none of the three can
+# share this file - one speaks `gh`, the others `glab` - so nothing in CI catches them
+# drifting apart:
+#   * loachbot-gitlab-mr/scripts/check-parked-mr.sh parks by renaming too, with the same
+#     comment-then-rename invariant and the same 0/5/6 contract. Change the parking logic
+#     in one and change it there.
+#   * loachbot-gitlab-issue/scripts/check-parked-issue.sh keeps the 0/5/6 contract but
+#     parks with a `state::blocked` label rather than a rename, because an issue in
+#     somebody else's queue is not a title to rewrite. That difference is deliberate: it
+#     is not a copy of this logic and must not be synced to it.
 #
 # A parking run comments first and renames second, so the parking rename is the
 # newest event it leaves behind. The most recent one wins: an item can be parked,

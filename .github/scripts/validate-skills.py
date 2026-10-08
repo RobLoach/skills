@@ -9,6 +9,7 @@ Checks, per skill:
   * every scripts/*.sh referenced by SKILL.md exists, and none sit there unreferenced
   * scripts marked `# SHARED:` are byte-identical in every skill that carries a copy
   * a script's `Exit codes:` block lists exactly the codes it really exits with
+  * SKILL.md says what to do about every exit code its scripts can hand back
   * SKILL.md sections marked `<!-- SHARED: -->` are identical wherever they appear
   * scripts start with a shebang and pass shellcheck, when shellcheck is installed
 
@@ -267,6 +268,76 @@ def check_exit_codes(skill_dirs: list[Path]) -> None:
                     fail(script, f"documents exit {code}, which it never raises")
 
 
+def check_handled_exit_codes(skill_dirs: list[Path]) -> None:
+    """Every exit code a script can hand back must be one SKILL.md tells the agent to act on.
+
+    check_exit_codes above keeps a script honest with itself. This keeps the SKILL.md
+    honest with the script, which is the end that actually matters: the exit code only
+    exists to steer the agent, so a code with no instruction beside it is a branch the
+    agent meets at runtime with nothing to go on. That gap reads as complete from either
+    file alone - the script documents the code, the SKILL.md documents a workflow - and is
+    only visible by comparing the two.
+
+    A script's codes are matched against the prose that follows its *own* invocation,
+    bounded by the next script invocation or the next `###` heading, so a step that runs
+    two scripts does not credit one with the other's bullets. Both bullet lists
+    (`- **4** - ...`) and inline prose ("exit **5** means") count; the agent reads either.
+
+    The same two escapes as above apply, for the same reasons: a region saying "any other
+    non-zero" has covered everything by definition, and a script that passes another
+    command's code through can hand back codes no list could enumerate.
+    """
+    for skill_dir in skill_dirs:
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        text = skill_md.read_text()
+
+        # Every script invocation and heading, in document order, so each region can be
+        # cut at whichever comes next.
+        marks = sorted(
+            [(m.start(), m.group(1)) for m in re.finditer(r"scripts/([A-Za-z0-9._-]+\.sh)", text)]
+            + [(m.start(), None) for m in re.finditer(r"^### ", text, re.MULTILINE)]
+        )
+
+        regions: dict[str, str] = {}
+        for index, (start, name) in enumerate(marks):
+            if name is None:
+                continue
+            end = marks[index + 1][0] if index + 1 < len(marks) else len(text)
+            regions[name] = regions.get(name, "") + text[start:end]
+
+        for script in sorted((skill_dir / "scripts").glob("*.sh")):
+            body = script.read_text()
+            code = "\n".join(
+                line for line in body.split("\n") if not line.lstrip().startswith("#")
+            )
+            raised = {int(m) for m in re.findall(r"\bexit\s+(\d+)\b", code)} - {0, 64}
+            if not raised:
+                continue
+
+            header = re.search(r"^# Exit codes:\n(?P<body>(?:#.*\n)+)", body, re.MULTILINE)
+            if header and re.search(r"\bexit\s+\"?\$", code):
+                # Pass-through: the header's list is the contract, not the literals here.
+                raised |= {
+                    int(m) for m in re.findall(r"^#\s+(\d+)\s", header.group("body"), re.MULTILINE)
+                } - {0, 64}
+
+            region = regions.get(script.name)
+            if region is None:
+                continue  # check_scripts already reports an unreferenced script.
+            if "any other non-zero" in region.lower():
+                continue
+
+            handled = {int(m) for m in re.findall(r"\*\*(\d+)\*\*", region)}
+            for missing in sorted(raised - handled):
+                fail(
+                    skill_md,
+                    f"scripts/{script.name} can exit {missing}, but SKILL.md never says "
+                    "what the agent should do about it",
+                )
+
+
 def shellcheck_usable() -> bool:
     """Finding `shellcheck` on PATH is not enough to know it runs.
 
@@ -322,6 +393,7 @@ def main() -> int:
 
     check_shared_scripts(skill_dirs)
     check_exit_codes(skill_dirs)
+    check_handled_exit_codes(skill_dirs)
     check_shared_sections(skill_dirs)
     run_shellcheck(skill_dirs)
 

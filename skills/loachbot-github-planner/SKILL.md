@@ -188,7 +188,7 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 ## Rules
 
 - Never push branches, open PRs, or edit the project's code while planning. Step 2 resets the clone to the remote default branch; nothing beyond that is written, and nothing is written to the remote.
-- Runs collide only through the base clone they share, so that is what the limit is about. Step 2 resets the clone at `~/Projects/<owner>/<repo>`, which the fixer skills build their worktrees from, so no other run may be using that same clone at the time. Runs against *different* clones are independent and may overlap freely — including a `loachbot-gitlab-mr` run, which clones to `~/Projects/drupalcode/<project>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+- Runs collide only through the base clone they share, so that is what the limit is about. Step 2 resets the clone at `~/Projects/<owner>/<repo>`, which the fixer skills build their worktrees from, so no other run may be using that same clone at the time. Runs against *different* clones are independent and may overlap freely — including any of the GitLab skills, which clone to `~/Projects/drupalcode/<project>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."

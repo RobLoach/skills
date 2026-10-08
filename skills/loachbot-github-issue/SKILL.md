@@ -153,6 +153,7 @@ Recovery paths, by exit code:
 
 - **4** — the branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again.
 - **3** — the rebase conflicted and has already been aborted. Handle it like Step 4 (comment + `(Needs Info)`) and stop; never keep working in a half-rebased worktree.
+- Any other non-zero — the worktree could not be created, for instance because the local branch diverged or the clone is unhealthy. The script names the failing command on stderr. Stop and report it; do not force through it.
 
 Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix; the main thread keeps the git/push/PR steps.
 
@@ -240,6 +241,6 @@ Then report the completed PR URL to the user:
 - Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a just-finished issue still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
-- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — including a `loachbot-gitlab-mr` run, which clones to `~/Projects/drupalcode/<project>` and so can never collide with a GitHub one at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — including any of the GitLab skills, which clone to `~/Projects/drupalcode/<project>` and so can never collide with a GitHub one at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
 - Keep commit messages to one concise line, following your global commit conventions.
 - Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"
