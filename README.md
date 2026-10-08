@@ -32,7 +32,7 @@ Nothing moves without you: the Planner files only the issues you approve, and a 
 The three GitLab skills chain the same way, except that the handoff is a `state::` label on the issue rather than a draft Pull Request, because that is how drupal.org's review workflow works:
 
 ```
-Issue Fixer       claims an issue, opens a merge request, state::needsReview
+Issue Fixer       claims an issue, opens a merge request, unassigns, state::needsReview
                       │
 Reviewer          reads it against the issue, comments inline, state::needsWork
                       │
@@ -110,7 +110,7 @@ Run LoachBot Pull Requests until there aren't any left
 
 ### GitLab Issue Fixer
 
-Picks up one open [drupal.org](https://www.drupal.org) issue you reported, claims it by commenting `/do:assign me`, implements the fix on the issue's shared fork, opens a merge request, and moves the issue to `state::needsReview` with a short summary of what it did.
+Picks up one open [drupal.org](https://www.drupal.org) issue you reported, claims it by commenting `/do:assign me`, implements the fix on the issue's shared fork, opens a merge request, then unassigns itself and sets `state::needsReview` with a short summary of what it did. Claim and handback both go through drupalbot's `/do:` commands rather than the API, so they work the same whether or not you hold a role on the project.
 
 Drupal.org does not work the way a GitHub habit expects, and most of this skill is about the difference. There are no personal forks: every issue has one shared fork at `issue/<project>-<id>` that everybody working the issue pushes to, so the skill continues whatever branch is already there rather than starting its own. Creating that fork and getting push access are not API calls — a contributor who isn't a project member can do neither — so it asks drupalbot with `/do:fork` and `/do:access` and waits. And every merge request it opens carries an `AI-Generated:` line, because [drupal.org requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) and a contribution without it can be declined on that basis alone.
 

@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-issue
-description: Autonomous drupal.org issue fixer called LoachBot. Picks up one open drupal.org GitLab issue, claims it by commenting /do:assign me, implements the fix on the issue's shared fork, opens a merge request, and hands the issue back at state::needsReview with a short summary. Use when the user wants to pick up or fix a drupal.org issue, open a merge request for one, or asks to "run LoachBot GitLab Issues", including repeated runs like "run LoachBot GitLab Issues three times" or "until there aren't any left".
+description: Autonomous drupal.org issue fixer called LoachBot. Picks up one open drupal.org GitLab issue, claims it by commenting /do:assign me, implements the fix on the issue's shared fork, opens a merge request, then unassigns itself and sets state::needsReview with a short summary. Use when the user wants to pick up or fix a drupal.org issue, open a merge request for one, or asks to "run LoachBot GitLab Issues", including repeated runs like "run LoachBot GitLab Issues three times" or "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-issue/SKILL.md
@@ -366,7 +366,7 @@ Do not post a second question on an issue that is already parked, and do not set
 
 ### 9. Hand it back
 
-With every job green, hand the issue to review. The summary and the label go in one comment: `/do:` lines are drupalbot commands, so post them **verbatim** and do not translate them into GitLab quick actions.
+With every job green, hand the issue to review. The summary, the label and the unassignment all go in **one comment**: `/do:` lines are drupalbot commands, so post them **verbatim** and do not translate them into GitLab quick actions.
 
 ```bash
 glab issue note <issue-iid> -R git.drupalcode.org/project/<project> -m "$(cat <<'EOF'
@@ -377,14 +377,27 @@ and anything the issue asked for that this does not cover>
 
 The pipeline is green.
 
+/do:unassign me
 /do:label ~"state::needsReview"
 EOF
 )"
 ```
 
-Keep it short and specific. "Implemented the fix" tells a reviewer nothing they could not see; naming the approach and the one thing you were unsure about is what gets a review rather than a shrug.
+Keep the summary short and specific. "Implemented the fix" tells a reviewer nothing they could not see; naming the approach and the one thing you were unsure about is what gets a review rather than a shrug.
 
-Leave the assignment alone. On drupal.org the assignee is who is driving the issue, and you still are: the merge request is yours to iterate on when the review comes back. `state::needsReview` is the signal, not an empty assignee field.
+Both commands go through drupalbot rather than through the API, even where you hold the project role to set an assignee and a label directly. One comment does the whole handback, works the same whether you are a maintainer or a first-time contributor, and leaves the reason for the change sitting next to the change itself in the thread.
+
+Unassigning is what ends your claim. The issue is no longer waiting on you — it is waiting on a reviewer — and leaving yourself on it tells the queue otherwise.
+
+drupalbot acts a few seconds after the comment lands, so confirm both halves took effect rather than assuming:
+
+```bash
+sleep 15
+glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>/issues/<issue-iid>" |
+    jq -r '"assignees=[\([.assignees[].username] | join(","))] labels=[\(.labels | join(","))]"'
+```
+
+Expect an empty assignee list and `state::needsReview` among the labels. If either is missing, give it another few seconds and read again; if it still hasn't landed, say so and point the user at the issue. Do **not** post the comment a second time — a duplicated handback in the thread is worse than a label somebody sets by hand.
 
 Then remove the worktree and its local branch — the work is pushed, so nothing is lost:
 
@@ -409,6 +422,7 @@ Report both links to the user, with the same summary you posted:
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
 - Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — this skill clones to `~/Projects/drupalcode/<project>`, the same place `loachbot-gitlab-mr` does, so those two must not run against the same project at once. A GitHub LoachBot run at `~/Projects/<owner>/<repo>` can never collide with either. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
 - Post exactly the comments this workflow calls for: the claim, the fork and access commands the scripts post, one parking question, and one handback. Nothing else.
+- A run ends in exactly one of two states, and never in between: parked, assigned to you with `state::blocked` and a question; or handed back, unassigned with `state::needsReview` and a merge request. An issue left claimed with neither is an unfinished run, which is what Step 1 picks up as a `resume`.
 - Every merge request carries its `AI-Generated:` disclosure. Drupal.org requires it, and a contribution without it is one a maintainer may decline on that basis alone.
 - Never set `state::rtbc`, never approve, and never merge. The most this skill moves an issue to is `state::needsReview`.
 - Keep commit messages to one concise line, following drupal.org's `Issue #<issue-id>: <short description>` convention.
