@@ -19,8 +19,12 @@
 # this matches on each job's own allow_failure flag and never on a list of names.
 #
 # Two details that are easy to get wrong, and silently:
-#   * The pipeline belongs to the *source* fork, not the project the merge request
-#     targets. Asking the target project for it returns 404.
+#   * Which project holds the pipeline is not fixed. GitLab runs a fork's merge request
+#     pipeline in the *parent* project when its author can push there, so a maintainer's
+#     own merge request keeps it on the project while a contributor's leaves it on the
+#     fork - and asking the wrong one returns a flat 404 rather than anything to act on.
+#     head_pipeline.project_id says which it is; source_project_id is only the fallback
+#     for a payload that omits it.
 #   * The merge request *list* endpoint omits head_pipeline entirely. Only a
 #     single-merge-request read carries it, so that is what this polls.
 #
@@ -61,17 +65,21 @@ sleep "$SETTLE_SECONDS"
 # believe "no CI" only after several probes. Getting this wrong would mark a merge
 # request done with its CI never run.
 PIPELINE_ID=
-SOURCE_ID=
+PIPELINE_PROJECT=
+MR_IID=
 for _ in $(seq 1 "$NO_PIPELINE_PROBES"); do
     if MR=$(read_mr); then
+        MR_IID=$(printf '%s' "$MR" | jq -r '.iid // empty')
         PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
-        SOURCE_ID=$(printf '%s' "$MR" | jq -r '.source_project_id // empty')
+        # The pipeline names the project it ran in; fall back to the fork without it.
+        PIPELINE_PROJECT=$(printf '%s' "$MR" |
+            jq -r '.head_pipeline.project_id // .source_project_id // empty')
     fi
     [ -n "$PIPELINE_ID" ] && break
     sleep "$POLL_SECONDS"
 done
 
-if [ -z "$SOURCE_ID" ]; then
+if [ -z "$MR_IID" ]; then
     echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 7
 fi
@@ -90,7 +98,7 @@ fi
 STATUS=
 MISSES=0
 for _ in $(seq 1 "$MAX_POLLS"); do
-    if ! STATUS=$(api "projects/$SOURCE_ID/pipelines/$PIPELINE_ID" 2>/dev/null |
+    if ! STATUS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID" 2>/dev/null |
         jq -r '.status // empty'); then
         STATUS=
     fi
@@ -99,7 +107,7 @@ for _ in $(seq 1 "$MAX_POLLS"); do
         "")
             MISSES=$((MISSES + 1))
             if [ "$MISSES" -ge "$NO_PIPELINE_PROBES" ]; then
-                echo "cannot read pipeline $PIPELINE_ID in project $SOURCE_ID" \
+                echo "cannot read pipeline $PIPELINE_ID in project $PIPELINE_PROJECT" \
                     "($MISSES consecutive failures)" >&2
                 exit 7
             fi
@@ -117,9 +125,9 @@ case $STATUS in
         ;;
 esac
 
-if ! JOBS=$(api "projects/$SOURCE_ID/pipelines/$PIPELINE_ID/jobs?per_page=100" 2>/dev/null) ||
+if ! JOBS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" 2>/dev/null) ||
     [ "$(printf '%s' "$JOBS" | jq -r 'type')" != "array" ]; then
-    echo "cannot read the jobs of pipeline $PIPELINE_ID in project $SOURCE_ID" >&2
+    echo "cannot read the jobs of pipeline $PIPELINE_ID in project $PIPELINE_PROJECT" >&2
     exit 7
 fi
 
