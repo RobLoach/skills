@@ -27,8 +27,12 @@
 # Which jobs carry it is per-project configuration, not a fixed set, so nothing here
 # matches on job names.
 #
-# The pipeline belongs to the *source* fork, not the project the merge request targets;
-# asking the target project for it returns 404. The diff itself is read from the target.
+# Which project holds the pipeline is not fixed. GitLab runs a fork's merge request
+# pipeline in the *parent* project when its author can push there, so a maintainer's own
+# merge request keeps it on the project while a contributor's leaves it on the fork, and
+# asking the wrong one returns 404 - which would leave `jobs` empty and the review blind
+# to red CI. head_pipeline.project_id says which it is. The fork is still where
+# `issue_ref` comes from, and the diff is still read from the target.
 #
 # `issue_ref` is null when the merge request came from a plain branch rather than a
 # drupal.org issue fork. Review the diff anyway and say so.
@@ -60,6 +64,9 @@ fi
 
 SOURCE_ID=$(printf '%s' "$MR" | jq -r '.source_project_id // empty')
 PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
+# The pipeline names the project it ran in; fall back to the fork without it.
+PIPELINE_PROJECT=$(printf '%s' "$MR" |
+    jq -r '.head_pipeline.project_id // .source_project_id // empty')
 
 # The issue number is the numeric tail of the fork's path: issue/<project>-<number>.
 # Taking the last hyphen-separated field keeps working for projects whose machine name
@@ -86,8 +93,8 @@ if RAW_FILES=$(api --paginate \
 fi
 
 JOBS='[]'
-if [ -n "$PIPELINE_ID" ] && [ -n "$SOURCE_ID" ]; then
-    RAW=$(api "projects/$SOURCE_ID/pipelines/$PIPELINE_ID/jobs?per_page=100" 2>/dev/null || echo '[]')
+if [ -n "$PIPELINE_ID" ] && [ -n "$PIPELINE_PROJECT" ]; then
+    RAW=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" 2>/dev/null || echo '[]')
     if [ "$(printf '%s' "$RAW" | jq -r 'type')" = "array" ]; then
         # A retried job is listed once per attempt; the highest id is the latest run.
         JOBS=$(printf '%s' "$RAW" |
