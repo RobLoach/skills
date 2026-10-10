@@ -82,6 +82,12 @@ if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
         echo "$NAMESPACE/$PROJECT keeps its issues in GitLab, but issue $REF is not there" >&2
         exit 6
     fi
+    # The settled states are matched by prefix rather than by exact name: drupal.org
+    # spells a label more than one way across projects - project/ai carries
+    # `state::needs review`, `state::needs_review` and `state::needsReview` at once - so
+    # an exact list would silently miss a variant and report finished work as actionable.
+    # `state::needsReview` is deliberately absent: an issue awaiting review is still
+    # waiting on code if that review asks for more.
     printf '%s' "$ISSUE" | jq -c --arg ref "$REF" '{
         source: "gitlab",
         ref: $ref,
@@ -89,8 +95,11 @@ if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
         status: (if .state == "closed" then "Closed"
                  else ([.labels[] | select(startswith("state::"))] | first // "open") end),
         actionable: ((.state != "closed")
-                     and ((.labels | index("state::rtbc")) | not)
-                     and ((.labels | index("state::fixed")) | not)),
+                     and ([.labels[]? | select(startswith("state::rtbc")
+                                               or startswith("state::fixed")
+                                               or startswith("state::postponed")
+                                               or startswith("state::closed"))]
+                          | length == 0)),
         writable: true,
         url: .web_url,
         labels: .labels,
