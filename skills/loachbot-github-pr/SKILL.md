@@ -99,7 +99,7 @@ For each PR (most-recently-updated first), decide whether it's actionable from t
     Act on its exit code:
     - **0** → answered; the printed replies are clarification for Steps 3-4 — they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
     - **6** → nobody has answered yet. Skip the PR.
-    - **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip the PR and mention it to the user.
+    - **5** → nothing to measure replies against: either the PR could not be read, or the suffix was added by hand. Skip the PR and mention it to the user.
 
 Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
 

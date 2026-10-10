@@ -99,7 +99,7 @@ For each issue (most-recently-updated first), decide whether it's actionable fro
     Act on its exit code:
     - **0** → answered; the printed replies are clarification for Step 2. The issue is actionable.
     - **6** → nobody has answered yet. Skip the issue.
-    - **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip the issue and mention it to the user.
+    - **5** → nothing to measure replies against: either the issue could not be read, or the suffix was added by hand. Skip the issue and mention it to the user.
 
 Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
 

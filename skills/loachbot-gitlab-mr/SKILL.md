@@ -142,7 +142,7 @@ Act on its exit code:
 
 - **0** → answered; the printed replies are clarification for Step 2. Actionable.
 - **6** → nobody has answered yet. Skip it.
-- **5** → the suffix was added by hand, so there is nothing to measure replies against. Skip it and mention it to the user.
+- **5** → nothing to measure replies against: either the merge request could not be read, or the suffix was added by hand. Skip it and mention it to the user.
 
 Skip it when the issue behind it is already settled — RTBC means somebody is waiting to commit it and a force-push would reset that, and fixed, closed or postponed means it is not yours to pick up. Take the issue's number from the source fork's path rather than the branch name, which contributors do rename, then read it per [The issue lives in one of two places](#the-issue-lives-in-one-of-two-places):
 

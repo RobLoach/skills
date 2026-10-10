@@ -26,8 +26,9 @@
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
 #   6  Parked, but nobody has answered yet. Skip the item.
-#   5  No parking rename exists: the suffix was added by hand, so there is nothing
-#      to measure replies against. Skip the item and mention it to the user.
+#   5  Nothing to measure replies against: either the item could not be read, or no
+#      parking rename exists because the suffix was added by hand. Which one is named
+#      on stderr. Skip the item and mention it to the user.
 
 set -euo pipefail
 
@@ -41,25 +42,44 @@ REPO=$2
 NUMBER=$3
 KIND=${4:-issue}
 
-PARKED=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/events" \
+# Every read here is taken in two steps. `gh` exits non-zero on a 404, and under
+# `set -e -o pipefail` that ends the run before it can say which read failed - so an
+# unreadable item would hand back `gh`'s own exit code, which means nothing to the
+# caller. None of them may fall back to "found nothing" either: a failed comments read
+# treated as "no replies" would report an answered item as unanswered and skip it on
+# every future run.
+RENAMES=''
+if ! RENAMES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/events" \
     --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' \
-    | tail -1)
+    2>/dev/null); then
+    echo "cannot read the events of $OWNER/$REPO#$NUMBER" >&2
+    exit 5
+fi
 
 # Guard on the timestamp: every string sorts after an empty one, so an unparked
 # item would return its entire comment history below and read as a pile of replies.
+PARKED=$(printf '%s' "$RENAMES" | tail -1)
 if [ -z "$PARKED" ]; then
     echo "no parking rename found" >&2
     exit 5
 fi
 export PARKED
 
-REPLIES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/comments" \
-    --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}')
+if ! REPLIES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/comments" \
+    --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}' \
+    2>/dev/null); then
+    echo "cannot read the comments of $OWNER/$REPO#$NUMBER" >&2
+    exit 5
+fi
 
 INLINE=
 if [ "$KIND" = "pr" ]; then
-    INLINE=$(gh api --paginate "repos/$OWNER/$REPO/pulls/$NUMBER/comments" \
-        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}')
+    if ! INLINE=$(gh api --paginate "repos/$OWNER/$REPO/pulls/$NUMBER/comments" \
+        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}' \
+        2>/dev/null); then
+        echo "cannot read the review comments of $OWNER/$REPO#$NUMBER" >&2
+        exit 5
+    fi
 fi
 
 if [ -z "$REPLIES$INLINE" ]; then

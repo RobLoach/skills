@@ -27,8 +27,9 @@
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
-#   5  No parking rename exists: the suffix was added by hand, so there is nothing to
-#      measure replies against. Skip it and mention it to the user.
+#   5  Nothing to measure replies against: either the merge request could not be read,
+#      or no parking rename exists because the suffix was added by hand. Which one is
+#      named on stderr. Skip it and mention it to the user.
 #   6  Parked, but nobody has answered yet. Skip it.
 
 set -euo pipefail
@@ -46,10 +47,14 @@ IID=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
+# Taken in two steps so the type check below is what reports an unreadable merge
+# request: `glab api` exits non-zero on a 404, and under `set -e` that would end the run
+# here with no explanation of which read failed.
 NOTES=$(api --paginate \
-    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/notes?sort=asc&order_by=created_at" 2>/dev/null)
+    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/notes?sort=asc&order_by=created_at" 2>/dev/null) ||
+    NOTES=''
 
-if [ "$(printf '%s' "$NOTES" | jq -r 'type')" != "array" ]; then
+if [ "$(printf '%s' "${NOTES:-null}" | jq -r 'type')" != "array" ]; then
     echo "cannot read the notes of !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 5
 fi
