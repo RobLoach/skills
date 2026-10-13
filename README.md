@@ -7,6 +7,7 @@ A collection of AI agent skills focused on developing and maintaining open-sourc
 - [GitHub Planner](#github-planner): Creates issues aligned with project goals
 - [GitHub Issue Fixer](#github-issue-fixer): Implements one assigned issue at a time and opens a Pull Request
 - [GitHub Pull Request Fixer](#github-pull-request-fixer): Addresses feedback within draft Pull Requests
+- [GitLab Planner](#gitlab-planner): Plans issues for a drupal.org project and files the approved ones
 - [GitLab Issue Fixer](#gitlab-issue-fixer): Claims one drupal.org issue and opens a merge request for it
 - [GitLab Merge Request Fixer](#gitlab-merge-request-fixer): Rebases one drupal.org merge request and makes every CI job green
 - [GitLab Merge Request Reviewer](#gitlab-merge-request-reviewer): Reviews one drupal.org merge request and posts its findings inline
@@ -29,9 +30,11 @@ You               merge it
 
 Nothing moves without you: the Planner files only the issues you approve, and a Pull Request only reaches the PR Fixer once you have reviewed it and set it back to **Draft**. Merging is always yours.
 
-The three GitLab skills chain the same way, except that the handoff is a `state::` label on the issue rather than a draft Pull Request, because that is how drupal.org's review workflow works:
+The four GitLab skills chain the same way, except that the handoff is a `state::` label on the issue rather than a draft Pull Request, because that is how drupal.org's review workflow works:
 
 ```
+Planner           files the issues you approve, unassigned in the project's queue
+                      │
 Issue Fixer       claims an issue, opens a merge request, unassigns, state::needsReview
                       │
 Reviewer          reads it against the issue, comments inline, state::needsWork
@@ -43,7 +46,9 @@ MR Fixer          rebases onto the target branch, makes every CI job green, stat
 A maintainer      reviews and commits it
 ```
 
-The same bargain holds, and rather more firmly: none of the three merges, approves, or sets `state::rtbc`. Review and commit belong to the project's maintainers, who on somebody else's module are not you.
+Unassigned is the handoff at the top of that chain: a claim on drupal.org is a `/do:assign me` comment rather than a field, so the Planner files an issue and leaves it free, which is exactly what the Issue Fixer reads as available to pick up.
+
+The same bargain holds, and rather more firmly: none of the four merges, approves, or sets `state::rtbc`. Review and commit belong to the project's maintainers, who on somebody else's module are not you.
 
 ## Installation
 
@@ -66,7 +71,7 @@ The same bargain holds, and rather more firmly: none of the three merges, approv
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
 
-Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr`, `/loachbot-gitlab-issue`, `/loachbot-gitlab-mr`, `/loachbot-gitlab-review` — on agents that support them.
+Each skill also answers to its own name as a slash command — `/loachbot-github-planner`, `/loachbot-github-issue`, `/loachbot-github-pr`, `/loachbot-gitlab-planner`, `/loachbot-gitlab-issue`, `/loachbot-gitlab-mr`, `/loachbot-gitlab-review` — on agents that support them.
 
 ## Skills
 
@@ -108,6 +113,25 @@ A Pull Request has to be **open**, a **draft**, **authored by you** and **assign
 Run LoachBot Pull Requests
 Address the feedback on my recent pull request
 Run LoachBot Pull Requests until there aren't any left
+```
+
+### GitLab Planner
+
+Reads a [drupal.org](https://www.drupal.org) project, learns its goals, and proposes a set of issues to file in its GitLab queue.
+
+Planning a contrib module is not planning a GitHub repository with different URLs, so this is its own skill rather than a flag on the GitHub Planner. A project supports several branches at once — `1.4.x`, `1.5.x`, a default branch out in front — so every issue in the plan names the branch it lands on. Issue metadata is the project's own `category::` and `priority::` labels, and only the ones it has actually defined, because filing against a label that doesn't exist creates it. And a plan checked against a queue of hundreds needs the queue read first: duplicates are the failure mode, not missing ideas.
+
+Three places worth planning from are specific to drupal.org and easy to miss: `core_version_requirement` against the next Drupal major, the CI jobs the pipeline forgives with `allow_failure: true` while they sit red, and a default branch a long way ahead of its newest release tag.
+
+Everything it files is unassigned, carries drupal.org's own issue summary headings and the `AI-Generated: Yes` disclosure, and waits for your explicit approval first. A project whose queue never moved to GitLab — Drupal core among them — has nothing to file against through the API, so there the plan is handed to you to file by hand.
+
+**Examples:**
+
+```
+Run LoachBot GitLab Planner
+Plan some issues for ai_ckeditor
+What should I work on next in ai_image_crop?
+Plan issues for https://www.drupal.org/project/ai_ckeditor
 ```
 
 ### GitLab Issue Fixer
@@ -178,7 +202,7 @@ gh skills update --all
 
 The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for both GitLab Fixers, which is why those two must not run against the same project at once — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. Set `LOACHBOT_PROJECTS_DIR` to put all of that somewhere else. The skills treat that base clone as theirs — the Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The Reviewer never clones at all.
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for the GitLab Planner and both GitLab Fixers, which is why those three must not run against the same project at once — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. Set `LOACHBOT_PROJECTS_DIR` to put all of that somewhere else. The skills treat that base clone as theirs — either Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The Reviewer never clones at all.
 - **Namespace and host**: the GitLab skills assume drupal.org's `project/` namespace at `git.drupalcode.org`. `LOACHBOT_GITLAB_NAMESPACE` and `LOACHBOT_GITLAB_HOST` override both — use `sandbox` for a drupal.org sandbox project, or point them at another GitLab entirely.
 - **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skills additionally follow drupal.org's `Issue #<id>: <description>` convention.
 - **Merge request descriptions**: the GitLab Issue Fixer writes one short paragraph, `Closes #<id>`, and `AI-Generated: Yes`. The disclosure line is policy rather than preference — bending it costs the contribution its credit.
@@ -229,17 +253,19 @@ Two consequences worth knowing. Reading a drupal.org-only issue needs the `drupa
 
 That second consequence puts core out of reach of the *Issue Fixer* specifically: claiming an issue means commenting `/do:assign me`, and there is nothing to comment at. It says so and stops rather than starting work it cannot hand back. The MR Fixer and the Reviewer both work on core merge requests normally.
 
+The *Planner* lands in between. It plans such a project fine — the code is the same code — but there is no GitLab queue to file into, so it hands you the issues to file by hand and uses the `drupalorg` CLI to check them for duplicates first. Without that CLI it says plainly that no duplicate check was possible, rather than filing blind into a queue of thousands.
+
 The reason they check rather than just trying both: the two numbering spaces overlap. `ai_ckeditor`'s GitLab issue 3615852 is about stale toolbar items, while drupal.org's *node* 3615852 is an unrelated core issue about `ConfigManager`. Asking both and keeping whichever answers would hand back a real, confident, wrong requirement.
 
 **My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 
 Because the pipeline is lying, and noticing that is half of why these exist. Drupal.org's CI template marks some jobs `allow_failure: true`, which means they can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red.
 
-Which jobs are forgiven is per-project configuration rather than a fixed list. Observed in the wild: `ai_ckeditor` forgives four lint jobs, `node_menu_placer` fourteen including `eslint`, and `schemata` sixteen including `phpunit` variants — Drupal core forgives `PHPUnit Unit (Core)`. So all three skills read each job's own flag and report what they find, marked so you can see which ones the pipeline was forgiving: the two Fixers fix them, the Reviewer raises them as findings.
+Which jobs are forgiven is per-project configuration rather than a fixed list. Observed in the wild: `ai_ckeditor` forgives four lint jobs, `node_menu_placer` fourteen including `eslint`, and `schemata` sixteen including `phpunit` variants — Drupal core forgives `PHPUnit Unit (Core)`. So the skills read each job's own flag and report what they find, marked so you can see which ones the pipeline was forgiving: the two Fixers fix them, the Reviewer raises them as findings, and the Planner turns a standing red-but-forgiven job into an issue of its own.
 
 **Can I point it at a single repository?**
 
-Yes — name the repo and the fixers scope their search to it, e.g. "run LoachBot Issues on RobLoach/skills". Asking from inside a checkout ("fix the next issue on this project") works too. With no repo named, they search your whole account. The GitLab skills take a reference directly, which is usually quicker than letting them search: a merge request URL or `ai_ckeditor!23` for the MR skills, an issue URL or `ai_ckeditor#3615836` for the Issue Fixer.
+Yes — name the repo and the fixers scope their search to it, e.g. "run LoachBot Issues on RobLoach/skills". Asking from inside a checkout ("fix the next issue on this project") works too. With no repo named, they search your whole account. The GitLab skills take a reference directly, which is usually quicker than letting them search: a merge request URL or `ai_ckeditor!23` for the MR skills, an issue URL or `ai_ckeditor#3615836` for the Issue Fixer, and a project — `ai_ckeditor`, or either of its URLs — for the Planner.
 
 ## License
 
