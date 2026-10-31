@@ -1,6 +1,6 @@
 ---
 name: loachbot-github-pr
-description: Autonomous GitHub Pull Request Fixer agent called LoachBot. Scans GitHub for your own draft Pull Requests, addresses your review comments, then marks the Pull Request ready for review. Use when the user wants to address feedback on their draft pull requests, or asks to "run LoachBot Pull Requests", including repeated runs like "until there aren't any left".
+description: Address your own review comments on a GitHub Pull Request - picks the most recently updated open draft PR authored by and assigned to you, makes the requested changes, reacts 🚀 to each handled comment, gets CI green, then marks it ready for review. Use when the user wants to address feedback on their draft pull requests, or asks to "run LoachBot Pull Requests", including repeated runs like "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-pr/SKILL.md
@@ -27,33 +27,9 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
 
-Spin one up when any one of these holds:
-
-- You would read a file to understand how something works.
-- A question needs more than two searches.
-- A change needs more than one sentence to describe.
-- You would run a build, tests or a linter and react to the output.
-
-Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
-
-Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
-
-### Fan out
-
-Independent work goes out in one message, not one after another.
-
-Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
-
-The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
-
-What does have to stay sequential:
-
-- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
-- A sub-agent whose prompt needs an earlier one's answer.
-
-Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
+Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -167,6 +143,8 @@ AUTHOR=$(gh api user --jq '.login')
 
 Run the comment, inline-comment, and review-summary fetches in parallel. Investigate what comments refer to via [Sub-agents](#sub-agents).
 
+If there is nothing to address — no un-🚀'd comment, and no review summary submitted after the PR's newest commit (`gh pr view <number> --repo <owner>/<repo> --json commits --jq '.commits[-1].committedDate'`) — the PR is a draft for some other reason, such as work in progress. Do **not** mark it ready. Run Step 6's cleanup lines without `gh pr ready`, tell the user it was skipped and why, and go back to Step 1 for the next candidate.
+
 ### 4. Do the work
 
 Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). Delegate per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the change; independent comments run as concurrent sub-agents. The main thread keeps the git/reaction/ready steps.
@@ -218,7 +196,7 @@ Act on its exit code:
 - **0** → checks passed, or the repo has no CI. Continue to Step 6.
 - **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
 - **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without marking the PR ready.
-- **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
+- **1** → a check failed. Read the failing log first: take the run id from the check's link (`gh pr checks <number> --repo <owner>/<repo> --json name,state,link`), then `gh run view <run-id> --repo <owner>/<repo> --log-failed`. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
 
 ### 6. Mark the Pull Request as ready
 
@@ -240,5 +218,7 @@ If any comments were left unreacted because they need human judgment (Step 4), l
 - Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a PR just marked ready still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/reaction/ready steps.
 - Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
 - All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
-- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — including any of the GitLab skills, which clone to `~/Projects/drupalcode/<project>` and so can never collide with a GitHub one at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+<!-- SHARED: one-run-per-clone -->
+- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+<!-- /SHARED: one-run-per-clone -->
 - Keep commit messages to one concise line, following your global commit conventions.

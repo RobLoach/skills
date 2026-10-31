@@ -163,7 +163,7 @@ Takes one of your open [drupal.org](https://www.drupal.org) merge requests, reba
 
 The emphasis on *every* is the point. Drupal.org's CI template marks some jobs `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. Which jobs varies by project: the lint jobs usually, but `eslint`, `composer` variants and even `phpunit` variants on some. This skill reads each job's own flag instead of the rollup, and treats a forgiven failure as a failure.
 
-Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers.
+Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers. It fixes rebases and CI, not review findings, so while a merge request still has unresolved review threads it leaves the issue's state alone and tells you instead.
 
 **Examples:**
 

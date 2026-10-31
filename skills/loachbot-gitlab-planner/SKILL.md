@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-planner
-description: Plan the next set of issues for a drupal.org project by reading its code, learning its goals, and proposing a prioritized, sequenced plan of issues to file in its GitLab queue. Use when the user wants to plan upcoming work on a drupal.org module or theme, build a roadmap for a contrib project, decide what to tackle next there, or asks to "run LoachBot GitLab Planner" or "plan issues" for a drupal.org project.
+description: Plan the next issues for a drupal.org project (module, theme or Drupal core) by reading its code, issue queue, branches and CI, then propose a prioritized, branch-targeted plan and file the approved issues in its GitLab queue. For GitHub repositories use loachbot-github-planner instead. Use when the user wants to plan upcoming work on a drupal.org project, build a roadmap for a contrib module, decide what to work on next there, or asks to "run LoachBot GitLab Planner" or "plan issues" for a drupal.org project.
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-planner/SKILL.md
@@ -19,40 +19,18 @@ metadata:
 
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`) before running them, and adapt anything that doesn't fit the project in front of you.
+The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`) and `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) before running them, and adapt anything that doesn't fit the project in front of you.
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+
+`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs on different projects may overlap, so never use a fixed `/tmp` path.
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
 
-Spin one up when any one of these holds:
-
-- You would read a file to understand how something works.
-- A question needs more than two searches.
-- A change needs more than one sentence to describe.
-- You would run a build, tests or a linter and react to the output.
-
-Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
-
-Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
-
-### Fan out
-
-Independent work goes out in one message, not one after another.
-
-Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
-
-The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
-
-What does have to stay sequential:
-
-- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
-- A sub-agent whose prompt needs an earlier one's answer.
-
-Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
+Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -75,9 +53,9 @@ Planning here is not planning for a GitHub repository with different URLs. Four 
 - **A release is a branch, not a trunk.** A contrib project carries a branch per minor — `1.4.x`, `1.5.x` — with the default branch out in front of the newest supported one, and a tag per release. So *which branch does this land on* is part of each issue rather than an afterthought: the same fix on `1.4.x` and on the default branch is two different pieces of work, and a plan that never says which one it means is a plan a contributor has to guess at.
 - **Issue metadata is the project's own labels.** drupal.org's GitLab uses `category::bug|feature|task|support|plan`, `priority::critical|major|normal|minor`, `state::*` and `why::*` — but which of those a given project has actually defined varies, and so do the spellings. Step 3 reads the real list and Step 7 applies nothing outside it.
 
-And one that is policy rather than mechanics: drupal.org [requires](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) a contribution whose text was substantially generated by an AI tool to say so. An issue filed by this skill is such a contribution, so every one carries an `AI-Generated: Yes` line. It is not a courtesy to drop because the issue came out short.
+Every issue this skill files ends with an `AI-Generated: Yes` line; see [Rules](#rules).
 
-For anything about `glab` itself — note bodies, `--field` versus `--raw-field`, pagination — defer to the `glab` skill rather than guessing.
+Two `glab api` habits matter here: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents, and `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
 
 ## Workflow
 
@@ -85,7 +63,7 @@ For anything about `glab` itself — note bodies, `--field` versus `--raw-field`
 
 Determine which drupal.org project to plan for, in this order:
 
-1. A project named in the prompt or skill arguments: a machine name (`ai_ckeditor`), a `https://www.drupal.org/project/<project>` URL, or a `https://git.drupalcode.org/project/<project>` URL. Take the machine name out of it.
+1. A project named in the prompt or skill arguments: a machine name (`ai_ckeditor`), a `https://www.drupal.org/project/<project>` URL, or a `https://git.drupalcode.org/<namespace>/<project>` URL. Take the machine name out of it.
 2. Otherwise, if the current working directory is a drupal.org checkout, read it off the remote:
     ```bash
     # Last path segment of the first drupal.org remote, minus `.git`, minus the trailing
@@ -122,14 +100,14 @@ The script names the project remote `upstream`, the way `loachbot-gitlab-issue` 
 A plan that re-files what the queue already holds is worse than no plan, so read the queue before reading the code:
 
 ```bash
-bash <this skill's directory>/scripts/project-context.sh <project> > /tmp/plan-context.json
+bash <this skill's directory>/scripts/project-context.sh <project> > <tmp>/plan-context.json
 jq -r '"\(.path) default=\(.default_branch) queue=\(.issue_queue) open=\(.open_issues_count) capped=\(.capped)"' \
-    /tmp/plan-context.json
+    <tmp>/plan-context.json
 ```
 
 Act on its exit code:
 
-- **0** → read. Everything below works from `/tmp/plan-context.json`.
+- **0** → read. Everything below works from `<tmp>/plan-context.json`.
 - **6** → the project could not be read on the API host. Report it and stop.
 
 Then branch on `issue_queue`, because it decides where the plan can go:
@@ -234,16 +212,12 @@ Only keep issues with **no existing overlap** — when in doubt, drop it rather 
 
 Present the plan as an ordered list, most return-on-investment first, then ask which issues to file. Do **not** file anything without explicit approval.
 
-Before filing, make each approved issue self-contained: the body must carry all the context a reader needs, because nobody reading the queue in six months saw this planning session. Fold in:
-
-- Concrete grounding from Step 4: file paths and line references, code snippets, related commits, tags, and links to related issues or merge requests
-- The priority, sequencing and dependencies from the plan, plus the goals from Step 5 that explain *why* this matters and *when* it should land; reference a dependency filed earlier in this run by number (`Blocked by #3615838`)
-- Relevant facts from any persistent memory or project notes your harness keeps — but only facts fit for a public issue queue: no client or personal details, credentials, or internal URLs
+Before filing, make each approved issue self-contained — nobody reading the queue in six months saw this planning session. Carry the grounding from Step 4 (paths, line references, commits, links), the reason from Step 5, and dependencies on issues filed earlier in this run by number (`Blocked by #3615838`). Facts from your own memory or notes go in only if they are fit for a public queue: no client or personal details, credentials or internal URLs.
 
 Write the body to a file rather than inlining it, because an issue description is markdown and the shell mangles backticks and newlines. Use drupal.org's own issue summary headings, which is what a reviewer there expects to find:
 
 ```bash
-cat > /tmp/planned-issue.md <<'EOF'
+cat > <tmp>/planned-issue.md <<'EOF'
 ### Problem/Motivation
 
 <what is wrong or missing, with file references, and why it matters for the project's goals>
@@ -270,7 +244,7 @@ Then file it. Issues are created in plan order, so a later one can reference the
 glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>/issues" \
     -f "title=<title>" \
     -f "labels=<comma-separated labels>" \
-    -F "description=@/tmp/planned-issue.md" |
+    -F "description=@<tmp>/planned-issue.md" |
     jq -r '.web_url'
 ```
 
@@ -291,9 +265,11 @@ Then report, in plan order: each filed issue's URL, or each drafted body for the
 - Never file an issue the user did not explicitly approve, and never file one into a queue you could not check for duplicates without saying so first.
 - File issues unassigned and with no `state::` label. A claim on drupal.org is a comment, and triage belongs to the project's maintainers.
 - Only apply labels the project has already defined. Filing against an undefined label creates it.
-- Every filed issue carries `AI-Generated: Yes`. Drupal.org requires the disclosure, and an issue without it is one a maintainer may decline on that basis alone.
+- Every filed issue carries `AI-Generated: Yes`. Drupal.org [requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) of AI-generated contributions, however short the issue, and a maintainer may decline one without it on that basis alone.
 - Every issue in the plan names the branch it lands on. A contrib project has several supported at once, and "the default branch" is an answer, not a default.
-- Runs collide only through the base clone they share, so that is what the limit is about. Step 2 resets the clone at `~/Projects/drupalcode/<project>`, which `loachbot-gitlab-issue` and `loachbot-gitlab-mr` build their worktrees from, so no other run may be using that same clone at the time. Runs against *different* projects are independent and may overlap freely, as can a GitHub LoachBot run at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+<!-- SHARED: one-run-per-clone -->
+- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+<!-- /SHARED: one-run-per-clone -->
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority, a branch and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a red-but-forgiven CI job, a missing test) — no generic items like "add more tests".
 - Delegate the Step 4 gathering per [Sub-agents](#sub-agents), launching the independent reads together rather than in sequence; reserve the main thread for plan synthesis and the approve/file steps.

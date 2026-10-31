@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-review
-description: Autonomous drupal.org merge request reviewer called LoachBot. Reviews one merge request against the issue it claims to fix and against Drupal's own standards, posts its findings as resolvable inline threads, and moves the issue to needs-work. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, or asks to "run LoachBot Review", including repeated runs like "review the next three".
+description: Review one drupal.org merge request against the issue it claims to fix and against Drupal's own standards, post the findings as resolvable inline threads plus one summary, and set the issue to needs-work only when a finding blocks. Read-only against git; never approves or merges. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, or asks to "run LoachBot Review", including repeated runs like "review the next three".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-review/SKILL.md
@@ -19,40 +19,18 @@ This skill never clones, never checks anything out and never writes to a branch.
 
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`) and `<iid>` before running them, and adapt anything that doesn't fit the merge request in front of you.
+The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) and `<iid>` before running them, and adapt anything that doesn't fit the merge request in front of you.
 
 The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+
+`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs may overlap, so never use a fixed `/tmp` path.
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
 
-Spin one up when any one of these holds:
-
-- You would read a file to understand how something works.
-- A question needs more than two searches.
-- A change needs more than one sentence to describe.
-- You would run a build, tests or a linter and react to the output.
-
-Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
-
-Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
-
-### Fan out
-
-Independent work goes out in one message, not one after another.
-
-Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
-
-The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
-
-What does have to stay sequential:
-
-- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
-- A sub-agent whose prompt needs an earlier one's answer.
-
-Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
+Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -92,7 +70,7 @@ It returns one JSON object either way — `source`, `title`, `status`, `actionab
 - **6** → unreadable in the world this project belongs to. Report it; do **not** try the other world.
 - **7** → read, but it belongs to a different project, so the number was interpreted in the wrong world. Report it and discard the result.
 
-For anything about `glab` itself — note bodies, threaded replies, `--field` versus `--raw-field` — defer to the `glab` skill rather than guessing.
+Two `glab api` habits matter here: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents, and `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
 <!-- /SHARED: drupal-gotchas -->
 ## Workflow
 
@@ -116,16 +94,22 @@ Never review your own merge request without saying so. If the author is you, rev
 ### 2. Gather the context
 
 ```bash
-bash <this skill's directory>/scripts/review-context.sh <project> <iid> > /tmp/review.json
+bash <this skill's directory>/scripts/review-context.sh <project> <iid> > <tmp>/review.json
 ```
 
-One JSON object: the merge request, its `diff_refs`, the issue's number, the changed files, every pipeline job and the failing ones separately. Read its header for the shape. Exit **5** means the merge request could not be read — report it and stop.
+One JSON object: the merge request, its `diff_refs`, the issue's number, the changed files with their diffs, every pipeline job and the failing ones separately, and the threads already on the merge request. Read its header for the shape. Exit **5** means the merge request could not be read — report it and stop.
+
+Read the existing threads now, before forming any opinion, so this review does not repeat one an earlier review already left:
+
+```bash
+jq -r '.discussions[] | "\(.id) \(if .resolved then "resolved" else "open" end) \(.path // "-"):\(.line // "-") \(.author): \(.body)"' <tmp>/review.json
+```
 
 Then resolve that number to the actual issue, which may be in GitLab or on drupal.org:
 
 ```bash
-ISSUE_REF=$(jq -r '.issue_ref // empty' /tmp/review.json)
-[ -n "$ISSUE_REF" ] && bash <this skill's directory>/scripts/read-issue.sh <project> "$ISSUE_REF" > /tmp/issue.json
+ISSUE_REF=$(jq -r '.issue_ref // empty' <tmp>/review.json)
+[ -n "$ISSUE_REF" ] && bash <this skill's directory>/scripts/read-issue.sh <project> "$ISSUE_REF" > <tmp>/issue.json
 ```
 
 See [The issue lives in one of two places](#the-issue-lives-in-one-of-two-places) for the exit codes and why the two must never be tried interchangeably. A null `issue_ref`, or exit **6**, means you are reviewing without the requirement — do it anyway, and say so in the summary, because "does this match the issue" is the first question below and you will not have been able to answer it. Exit **7** means the number resolved to a different project's issue: discard it and treat the requirement as unavailable rather than reviewing against the wrong one.
@@ -139,28 +123,25 @@ The issue is the requirement; the merge request description is usually one line.
 - What does the issue ask for that the diff does not do?
 
 ```bash
-jq -r '"\(.source) · \(.status)\n\n\(.title)\n\n\(.description)"' /tmp/issue.json
+jq -r '"\(.source) · \(.status)\n\n\(.title)\n\n\(.description)"' <tmp>/issue.json
 ```
 
 Scope is the most common real finding and the easiest to miss once you are reading code. Answer these three before opening a single file.
 
 ### 4. Review the diff
 
-Fetch the diff, and any surrounding context you need, without cloning:
+The diff is already in `<tmp>/review.json`. Fetch whole files only when the hunks are not enough — nothing here clones:
 
 ```bash
-# The diff itself.
-glab api --hostname git.drupalcode.org --paginate \
-    "projects/project%2F<project>/merge_requests/<iid>/diffs?per_page=100" |
-    jq -r '.[] | "=== \(.new_path)\n\(.diff)"'
+jq -r '.files[] | "=== \(.new_path)\n\(.diff)"' <tmp>/review.json
 
-# A whole file as the branch leaves it, when the hunks are not enough. <path> is
-# URL-encoded: dots become %2E and slashes %2F.
+# A whole file as the branch leaves it. <path> is URL-encoded: dots become %2E and
+# slashes %2F.
 glab api --hostname git.drupalcode.org \
-    "projects/project%2F<project>/repository/files/<path>/raw?ref=<head-sha>"
+    "projects/<namespace>%2F<project>/repository/files/<path>/raw?ref=<head-sha>"
 ```
 
-Split the review across sub-agents by *concern*, not by file, and launch them together per [Fan out](#fan-out) — they are all reads. One each for correctness, Drupal API conventions, tests and security is a reasonable default; give each the diff and the issue summary from Step 3.
+Split the review across sub-agents by *concern*, not by file, and launch them together per [Sub-agents](#sub-agents) — they are all reads. One each for correctness, Drupal API conventions, tests and security is a reasonable default; give each the diff and the issue summary from Step 3.
 
 What to look for, beyond ordinary code review:
 
@@ -182,13 +163,14 @@ What to look for, beyond ordinary code review:
 `failing_jobs` from Step 2 is the authoritative list. A merge request can show a green pipeline with forgiven jobs red — which jobs varies by project, and includes test suites on some — so check that array rather than the rollup, and raise a forgiven failure as a finding like any other.
 
 ```bash
-jq -r '.failing_jobs[] | "\(.name): \(.status)\(if .allow_failure then " (forgiven by the pipeline)" else "" end)"' /tmp/review.json
+jq -r '.failing_jobs[] | "\(.name): \(.status)\(if .allow_failure then " (forgiven by the pipeline)" else "" end) job=\(.id)"' <tmp>/review.json
 ```
 
-Read a trace before attributing a failure to the change — a job can be red for reasons that predate the branch:
+Read a job's log before attributing a failure to the change — a job can be red for reasons that predate the branch. Read it from `pipeline_project_id`, not the fork, because the pipeline may have run in the parent:
 
 ```bash
-glab api --hostname git.drupalcode.org "projects/<source-project-id>/jobs/<job-id>/trace"
+PIPELINE_PROJECT=$(jq -r '.pipeline_project_id' <tmp>/review.json)
+glab api --hostname git.drupalcode.org "projects/$PIPELINE_PROJECT/jobs/<job-id>/trace"
 ```
 
 ### 6. Post the findings
@@ -196,8 +178,8 @@ glab api --hostname git.drupalcode.org "projects/<source-project-id>/jobs/<job-i
 A finding tied to a line goes inline, as a resolvable thread. Write the body to a file — review comments are markdown, and the shell mangles backticks and newlines:
 
 ```bash
-printf '%s\n' "This runs on every request; consider caching it." > /tmp/finding.md
-bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <path> <new-line> /tmp/finding.md
+printf '%s\n' "This runs on every request; consider caching it." > <tmp>/finding.md
+bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <path> <new-line> <tmp>/finding.md
 ```
 
 Exit **1** covers both ways this goes wrong:
@@ -209,10 +191,18 @@ Either way, do not retry with a guessed line number — that lands a comment on 
 
 Exit **5** means the merge request could not be read at all this time, even though Step 2 managed it — so almost always a transient API failure rather than anything about the position. Retry that one comment once; if it fails again, move the point into the summary and say there that the inline comment could not be posted.
 
+A finding an existing thread already raises gets a reply in that thread, not a new one:
+
+```bash
+glab api --hostname git.drupalcode.org -X POST \
+    "projects/<namespace>%2F<project>/merge_requests/<iid>/discussions/<discussion-id>/notes" \
+    -F "body=@<tmp>/finding.md"
+```
+
 Then one summary note, and only one:
 
 ```bash
-glab mr note create <iid> -R git.drupalcode.org/project/<project> < /tmp/summary.md
+glab mr note create <iid> -R git.drupalcode.org/<namespace>/<project> < <tmp>/summary.md
 ```
 
 The summary says, in this order: whether the change does what the issue asked, anything out of scope, the findings that block, the findings that are suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly — an unordered pile of twelve comments reads as a rejection even when ten of them are optional.
@@ -224,7 +214,7 @@ Say plainly when the change is good. A review that only ever lists problems trai
 Only when something blocks, move the issue to needs-work. The `/do:` lines are drupal.org bot commands, so post them **verbatim**:
 
 ```bash
-glab issue note <issue-id> -R git.drupalcode.org/project/<project> -m "$(cat <<'EOF'
+glab issue note <issue-id> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'
 Reviewed, comments inline.
 
 /do:label ~"state::needsWork"
@@ -241,6 +231,6 @@ When nothing blocks, **stop**. Do not set `state::rtbc`, do not approve, do not 
 - Review exactly one merge request per run. If asked to review several, repeat the whole workflow per merge request, and keep each review's comments to its own merge request.
 - Read-only against git: never clone, check out, push, rebase or merge. Everything comes through the API. This is also why this skill may run alongside any other LoachBot run, including on the same project.
 - Never approve, never set `state::rtbc`, never merge. The most this skill does to a state is `state::needsWork`, and only when a finding genuinely blocks.
-- Post inline comments only on lines the diff actually touches, and only one summary note per run. Do not re-post findings that an earlier run already left — read the existing discussions first (`glab api "projects/project%2F<project>/merge_requests/<iid>/discussions"`) and reply in the thread instead of opening a second one.
+- Post inline comments only on lines the diff actually touches, and only one summary note per run. Do not re-post a finding an existing thread already raises (Step 2); reply in that thread instead (Step 6).
 - Separate blocking findings from suggestions, every time.
 - Judge the change against the issue and the target branch, not against how you would have written it. Style preferences that `phpcs` does not enforce are not findings.

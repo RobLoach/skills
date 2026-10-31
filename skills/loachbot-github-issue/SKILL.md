@@ -1,6 +1,6 @@
 ---
 name: loachbot-github-issue
-description: Autonomous GitHub Issue Fixer agent called LoachBot. Picks the single most-recently-updated GitHub issue created by and assigned to you, implements a fix in a Pull Request, then unassigns the issue. Use when the user wants to work through issues assigned to them, or asks to "run LoachBot Issues", including repeated runs like "run LoachBot Issues six times" or "until there aren't any left".
+description: Fix the most recently updated GitHub issue that you created and is assigned to you - implement it in a worktree, open a Pull Request, get CI green, then unassign the issue. Use when the user wants to work through their own assigned GitHub issues, fix the next one, or asks to "run LoachBot Issues", including repeated runs like "six times" or "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-issue/SKILL.md
@@ -27,33 +27,9 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
 
-Spin one up when any one of these holds:
-
-- You would read a file to understand how something works.
-- A question needs more than two searches.
-- A change needs more than one sentence to describe.
-- You would run a build, tests or a linter and react to the output.
-
-Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
-
-Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
-
-### Fan out
-
-Independent work goes out in one message, not one after another.
-
-Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
-
-The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
-
-What does have to stay sequential:
-
-- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
-- A sub-agent whose prompt needs an earlier one's answer.
-
-Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
+Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -184,19 +160,13 @@ git push --force-with-lease -u origin HEAD
 PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
 if [ -z "$PR_NUMBER" ]; then
     # `gh pr create` prints the new Pull Request's URL; its last segment is the number.
+    # Body: one short paragraph, then "Fixes #<number>".
     PR_URL=$(gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me)
     PR_NUMBER=${PR_URL##*/}
 fi
 ```
 
-If that `git push` fails because you lack push access to the repository, fork it and push the branch there instead (`gh repo fork <owner>/<repo> --remote --remote-name fork`, then `git push --force-with-lease -u fork HEAD`), then open the PR against the upstream repo with the fork's branch as its head, extracting `PR_NUMBER` as above:
-
-```bash
-PR_URL=$(gh pr create --repo <owner>/<repo> --head "$(gh api user --jq '.login'):fix/issue-<number>" \
-    --title "<title>" --body "<body>" --assignee @me)
-```
-
-The `<user>:<branch>` form of `--head` tells `gh` the branch is already pushed; it does not accept an organization as the user, so a fork living in an org needs its PR opened by hand. Keep the fork remote named `fork` — the default naming renames the real origin to `upstream`, silently repointing every later `origin/$DEFAULT` reference at the fork. If forking isn't appropriate, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+If that `git push` fails for lack of push access, handle it like Step 4 (comment + `(Needs Info)`) and stop. An issue you can be assigned to is almost always on a repository you can push to, so this is a permissions problem for a human, not something to work around with a fork.
 
 Then verify CI. The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
 
@@ -209,7 +179,7 @@ Act on its exit code:
 - **0** → checks passed, or the repo has no CI. Continue.
 - **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
 - **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without un-assigning the issue.
-- **1** → a check failed. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- **1** → a check failed. Read the failing log first: take the run id from the check's link (`gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`), then `gh run view <run-id> --repo <owner>/<repo> --log-failed`. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
 
 ### 4. When the task is unclear
 
@@ -241,6 +211,7 @@ Then report the completed PR URL to the user:
 - Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a just-finished issue still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/PR/un-assign steps.
 - Never post comments except to ask for clarification (see Step 4). Un-assign silently.
 - All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
-- Runs collide only through the base clone they share, so that is what the limit is about. Two runs against the same clone must not overlap: one fetching, deleting branches or resetting it underneath the other corrupts both. Runs against *different* clones are independent and may overlap freely — including any of the GitLab skills, which clone to `~/Projects/drupalcode/<project>` and so can never collide with a GitHub one at `~/Projects/<owner>/<repo>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+<!-- SHARED: one-run-per-clone -->
+- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+<!-- /SHARED: one-run-per-clone -->
 - Keep commit messages to one concise line, following your global commit conventions.
-- Pull Request description should only have one short paragraph, with a link to the issue as "Fixes #<number>"

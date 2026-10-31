@@ -1,6 +1,6 @@
 ---
 name: loachbot-github-planner
-description: Plan the next set of GitHub issues for a repository by reading the code, learning the project's goals, and proposing a prioritized, sequenced plan of issues to file. Use when the user wants to plan upcoming work, build a roadmap of issues, decide what to tackle next, or asks to "run LoachBot Planner" or "plan issues" for a GitHub repo.
+description: Plan the next set of GitHub issues for a GitHub repository by reading its code, issues, PRs and releases, then propose a prioritized, sequenced plan and file the approved issues assigned to you. For drupal.org projects use loachbot-gitlab-planner instead. Use when the user wants to plan upcoming work or build a roadmap of issues for a GitHub repo, or asks to "run LoachBot Planner" or "plan issues" for one.
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-planner/SKILL.md
@@ -23,33 +23,9 @@ The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bas
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
 
-Spin one up when any one of these holds:
-
-- You would read a file to understand how something works.
-- A question needs more than two searches.
-- A change needs more than one sentence to describe.
-- You would run a build, tests or a linter and react to the output.
-
-Exception: reading a file you already decided to edit. A run with no sub-agents at all almost certainly stretched it.
-
-Types: `Explore` for read-only investigation (say how thorough); `general-purpose` for anything that edits or iterates.
-
-### Fan out
-
-Independent work goes out in one message, not one after another.
-
-Read-only investigation is always independent. Nothing two `Explore` sub-agents do can collide, however much they overlap, so asking three questions about one repository means three sub-agents launched together — never one, then the next once it reports back. Staggering reads buys no safety; it only costs wall-clock.
-
-The sequential rules under [Rules](#rules) govern *writes*: whole repeated runs, and anything touching the shared base clone or a worktree. They are not a general ban on concurrency, and they do not reach the sub-agents inside a single run.
-
-What does have to stay sequential:
-
-- Anything that writes — `git` in any form, builds that drop artefacts, formatters, codegen.
-- A sub-agent whose prompt needs an earlier one's answer.
-
-Otherwise, ask what two sub-agents would fight over. If the answer is nothing, they go out together.
+Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -169,13 +145,9 @@ Only keep issues with **no existing overlap** — when in doubt, drop it rather 
 
 Present the plan as an ordered list of what you think is the most return-on-investment, then ask the user which issues to create. Do **not** create any issue without explicit approval.
 
-Before filing, make each approved issue self-contained: the body must include **all memory and content relevant to the issue**, so a reader needs no outside context. Fold in:
+Before filing, make each approved issue self-contained — a reader must not need this planning session. Carry the grounding from step 3 (paths, line references, commits, links), the reason from step 4, and dependencies on issues filed earlier in this run by number (`Blocked by #12`). Facts from your own memory or notes go in only if they are fit for a public issue tracker: no client or personal details, credentials or internal URLs.
 
-- Relevant facts from any persistent memory or project notes your harness keeps that bear on the issue — but only facts fit for a public issue tracker: no client or personal details, credentials, or internal URLs
-- Concrete grounding gathered in step 3: file paths and line references, code snippets, related commits, releases, and links to related issues or PRs
-- The priority, sequencing, and dependencies from the plan, plus the goals from step 4 that explain *why* this matters and *when* it should land; when a dependency was already filed earlier in this run, reference it by number (e.g. `Blocked by #12`)
-
-Do not leave context implicit or assume the reader has seen the planning session. Create the approved issues in plan order, so a later issue can reference the earlier ones it depends on by number. For each approved issue: self-assigned with `--assignee @me` by default, unless the user told you to assign it to someone else or leave it unassigned:
+Create the approved issues in plan order, so a later issue can reference the earlier ones it depends on by number. For each approved issue: self-assigned with `--assignee @me` by default, unless the user told you to assign it to someone else or leave it unassigned:
 
 ```bash
 gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
@@ -188,7 +160,9 @@ Report each created issue URL back to the user, in plan order. Leave the rest un
 ## Rules
 
 - Never push branches, open PRs, or edit the project's code while planning. Step 2 resets the clone to the remote default branch; nothing beyond that is written, and nothing is written to the remote.
-- Runs collide only through the base clone they share, so that is what the limit is about. Step 2 resets the clone at `~/Projects/<owner>/<repo>`, which the fixer skills build their worktrees from, so no other run may be using that same clone at the time. Runs against *different* clones are independent and may overlap freely — including any of the GitLab skills, which clone to `~/Projects/drupalcode/<project>`. This bounds whole runs, not the sub-agents within one, which fan out per [Fan out](#fan-out).
+<!-- SHARED: one-run-per-clone -->
+- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+<!-- /SHARED: one-run-per-clone -->
 - Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas — every issue carries a priority and a place in the sequence.
 - Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test) — no generic items like "add more tests."
