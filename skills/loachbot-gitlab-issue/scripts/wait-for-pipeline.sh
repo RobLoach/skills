@@ -6,7 +6,13 @@
 # Wait for a merge request's pipeline to settle, then report every job that is not
 # green - including the ones the pipeline itself forgives.
 #
-# Usage: bash scripts/wait-for-pipeline.sh <project> <mr-iid>
+# Usage: bash scripts/wait-for-pipeline.sh <project> <mr-iid> [head-sha]
+#
+# Pass [head-sha] - `git rev-parse HEAD` after a push - whenever you have just pushed.
+# For a few seconds after a push the merge request still points at the *previous*
+# commit's pipeline, and settling on that one reports a stale result: a green from
+# before the change, or a red that the push already fixed. With [head-sha] given, only a
+# pipeline for that commit counts.
 #
 # Drupal's GitLab CI template marks some jobs `allow_failure: true`: they fail without
 # failing the pipeline, so `glab ci status` and the merge request's own badge both agree
@@ -28,6 +34,10 @@
 #   * The merge request *list* endpoint omits head_pipeline entirely. Only a
 #     single-merge-request read carries it, so that is what this polls.
 #
+# Each failing job is printed with its id, and the pipeline's project is printed once,
+# so its log can be read from the right project:
+#   glab api "projects/<pipeline-project>/jobs/<job-id>/trace"
+#
 # Jobs are reported newest-run-wins: a retried job appears more than once in the
 # API's list, and only the latest attempt reflects reality.
 #
@@ -39,7 +49,8 @@
 #   1  At least one job failed. The failures are printed, forgiven ones marked
 #      `(allow_failure)`; fix them and push again.
 #   7  The pipeline or its jobs could not be read. Unknown is not passing: report it.
-#   8  Still running after the full wait. Report the pending jobs and stop.
+#   8  Still running after the full wait, or no pipeline for [head-sha] ever appeared.
+#      Report the pending jobs and stop.
 
 set -euo pipefail
 
@@ -48,6 +59,7 @@ HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=${1:?project machine name required}
 IID=${2:?merge request iid required}
+HEAD_SHA=${3:-}
 
 SETTLE_SECONDS=${LOACHBOT_PIPELINE_SETTLE:-20}
 POLL_SECONDS=${LOACHBOT_PIPELINE_POLL:-20}
@@ -63,19 +75,28 @@ sleep "$SETTLE_SECONDS"
 
 # A project whose pipeline has not attached yet looks exactly like one with no CI, so
 # believe "no CI" only after several probes. Getting this wrong would mark a merge
-# request done with its CI never run.
+# request done with its CI never run. A pipeline for an older commit is not the one
+# being waited for: keep polling until the merge request points at [head-sha].
 PIPELINE_ID=
+PIPELINE_SHA=
 PIPELINE_PROJECT=
 MR_IID=
-for _ in $(seq 1 "$NO_PIPELINE_PROBES"); do
+for POLL in $(seq 1 "$MAX_POLLS"); do
     if MR=$(read_mr); then
         MR_IID=$(printf '%s' "$MR" | jq -r '.iid // empty')
         PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
+        PIPELINE_SHA=$(printf '%s' "$MR" | jq -r '.head_pipeline.sha // empty')
         # The pipeline names the project it ran in; fall back to the fork without it.
         PIPELINE_PROJECT=$(printf '%s' "$MR" |
             jq -r '.head_pipeline.project_id // .source_project_id // empty')
     fi
-    [ -n "$PIPELINE_ID" ] && break
+    if [ -n "$PIPELINE_ID" ] && { [ -z "$HEAD_SHA" ] || [ "$PIPELINE_SHA" = "$HEAD_SHA" ]; }; then
+        break
+    fi
+    # Nothing attached at all after the probes: an unreadable merge request, or no CI.
+    if [ -z "$PIPELINE_ID" ] && [ "$POLL" -ge "$NO_PIPELINE_PROBES" ]; then
+        break
+    fi
     sleep "$POLL_SECONDS"
 done
 
@@ -87,6 +108,11 @@ fi
 if [ -z "$PIPELINE_ID" ]; then
     echo "no pipeline attached to !$IID after $NO_PIPELINE_PROBES probes: treating the project as having no CI"
     exit 0
+fi
+
+if [ -n "$HEAD_SHA" ] && [ "$PIPELINE_SHA" != "$HEAD_SHA" ]; then
+    echo "!$IID still points at pipeline $PIPELINE_ID for $PIPELINE_SHA; none for $HEAD_SHA appeared" >&2
+    exit 8
 fi
 
 # Wait for the pipeline itself to reach a terminal state. `manual` and `scheduled`
@@ -125,7 +151,10 @@ case $STATUS in
         ;;
 esac
 
-if ! JOBS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" 2>/dev/null) ||
+# --paginate prints one array per page; a large pipeline (Drupal core's) has more than
+# one page of jobs, and the second page is as likely to hold the failure as the first.
+if ! JOBS=$(api --paginate "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" \
+    2>/dev/null | jq -sc 'add') ||
     [ "$(printf '%s' "$JOBS" | jq -r 'type')" != "array" ]; then
     echo "cannot read the jobs of pipeline $PIPELINE_ID in project $PIPELINE_PROJECT" >&2
     exit 7
@@ -136,16 +165,16 @@ fi
 LATEST=$(printf '%s' "$JOBS" | jq -c '
     group_by(.name)
     | map(max_by(.id))
-    | map({name, status, allow_failure})
+    | map({id, name, status, allow_failure})
 ')
 
 FAILED=$(printf '%s' "$LATEST" | jq -r '
     map(select(.status == "failed" or .status == "canceled"))
     | .[]
-    | "  \(.name): \(.status)\(if .allow_failure then " (allow_failure)" else "" end)"
+    | "  \(.name): \(.status)\(if .allow_failure then " (allow_failure)" else "" end) job=\(.id)"
 ')
 
-echo "pipeline $PIPELINE_ID reports $STATUS; per-job results:"
+echo "pipeline $PIPELINE_ID in project $PIPELINE_PROJECT reports $STATUS; per-job results:"
 printf '%s' "$LATEST" | jq -r '.[] | "  \(.name): \(.status)"' | sort
 
 if [ -n "$FAILED" ]; then
