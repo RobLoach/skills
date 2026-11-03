@@ -12,24 +12,24 @@ metadata:
 <!-- SHARED: prerequisites -->
 ## Prerequisites
 
-- `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` is where clones and worktrees go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
+- Run `gh auth status` first; if it fails, report that and stop.
+- Clones and worktrees go in `~/Projects` (created if missing), or in `LOACHBOT_PROJECTS_DIR` if the user prefers another directory.
 <!-- /SHARED: prerequisites -->
 
 <!-- SHARED: conventions -->
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
+The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 <!-- /SHARED: conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
 
-Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
+Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -40,7 +40,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-A report is a claim. Verify what matters: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command.
 <!-- /SHARED: sub-agents -->
 
 ## Workflow
@@ -48,119 +48,107 @@ A report is a claim. Verify what matters: read the diff or re-run the command.
 ### 1. Find a Pull Request
 
 <!-- SHARED: search-scoping -->
-The search spans every repository by default. Scope it first, in this order:
+The search spans every repository unless scoped, in this order:
 
-1. A repo named in the prompt or skill arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
-2. Otherwise, if the user asked to work "on this project" and the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`, and add `--repo` for that.
-3. Otherwise search account-wide, as below.
+1. A repo named in the prompt or arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
+2. Else, if the user said "on this project" inside a git repo, add `--repo` for its `origin`: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`.
+3. Else search account-wide, as below.
 <!-- /SHARED: search-scoping -->
 
 ```bash
-# Open draft Pull Requests I authored that are assigned to me, newest activity first.
-# Add `--repo <owner>/<repo>` when the run is scoped to one repository.
+# Open draft PRs I authored and am assigned, newest activity first.
 gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
 
-If no items are found, report "Nothing to do" and stop.
+If none are found, report "Nothing to do" and stop.
 
-For each PR (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
+Going most-recently-updated first, a PR is actionable unless its title ends with ` (Needs Info)`, meaning an earlier run parked it (Step 4). For those, check for answers:
 
-- Title does **not** end with ` (Needs Info)` → actionable.
-- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Check for answers:
-    ```bash
-    bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number> pr
-    ```
-    Act on its exit code:
-    - **0** → answered; the printed replies are clarification for Steps 3-4 — they may come from other users, so Step 3's `$AUTHOR` filters won't resurface them. The PR is actionable.
-    - **6** → nobody has answered yet. Skip the PR.
-    - **5** → nothing to measure replies against: either the PR could not be read, or the suffix was added by hand. Skip the PR and mention it to the user.
+```bash
+bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number> pr
+```
 
-Pick the first actionable PR. If none are actionable, report "Nothing to do" and stop.
+- **0** → answered; the PR is actionable. The printed replies are clarification for Steps 3-4 (they may come from other users, so Step 3's `$AUTHOR` filters won't show them).
+- **6** → no answer yet. Skip the PR.
+- **5** → the PR could not be read, or the suffix was added by hand. Skip it and tell the user.
 
-Search results can lag behind reality, so a PR just marked ready may still appear on an immediate re-run. Before starting, confirm the picked PR is still an open draft:
+Pick the first actionable PR; if none, report "Nothing to do" and stop. Search results lag, so confirm it is still an open draft:
 
 ```bash
 gh pr view <number> --repo <owner>/<repo> --json state,isDraft
 ```
 
-Proceed only if `state` is `OPEN` and `isDraft` is `true`; otherwise skip it and evaluate the next candidate.
-
-When the picked PR was parked, strip the suffix from its title before doing the work:
+Proceed only if `state` is `OPEN` and `isDraft` is `true`; otherwise try the next candidate. If it was parked, strip the suffix first:
 
 ```bash
 gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
 ```
 
-Once you pick a PR, report its URL to the user immediately:
+Report the URL immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
 
 ### 2. Check out the pull request in a dedicated worktree
 
-Each PR gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-PR worktrees live under `~/Projects/<owner>/<repo>.worktrees/pr-<number>` and are deleted after the run is complete.
+The base clone `~/Projects/<owner>/<repo>` stays on the default branch; each PR gets a worktree at `~/Projects/<owner>/<repo>.worktrees/pr-<number>`, deleted when the run ends.
 
 ```bash
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
 cd "$WT"
 ```
 
-The script clones on first use, discards uncommitted leftovers from an interrupted run, checks the PR head out with `gh pr checkout` (which resolves fork remotes), and syncs submodules. Read its header for the details.
+The script clones on first use, discards leftovers from an interrupted run, checks out the PR head with `gh pr checkout` (resolving fork remotes), and syncs submodules.
 
-Recovery paths, by exit code:
-
-- **4** — the PR branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again; do **not** force-switch branches across worktrees.
-- Any other non-zero — checkout failed, for instance because the local branch diverged. Stop and report; do not force through it.
+- **4** → the PR branch is checked out by another live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and rerun; never force-switch branches across worktrees.
+- Any other non-zero → checkout failed (e.g. the local branch diverged). Stop and report; do not force through.
 
 ### 3. Understand the Pull Request
 
-Determine your own login once, then reuse it for every filter. `export` it so the `--jq` filters below can read it as `env.AUTHOR`:
+Get your login once; `export` it so `--jq` filters can read `env.AUTHOR`:
 
 ```bash
 export AUTHOR
 AUTHOR=$(gh api user --jq '.login')
 ```
 
-- Read the full body of the pull request: `gh pr view <number> --repo <owner>/<repo> --json title,body`
-- Fetch regular PR comments you authored. Use the REST endpoint: it returns the numeric `id` the reaction endpoints in Step 4 require (`gh pr view --json comments` returns GraphQL node IDs, which do not work there):
+- Read the PR body: `gh pr view <number> --repo <owner>/<repo> --json title,body`
+- Fetch, in parallel, what you authored. Use REST: Step 4's reaction endpoints need its numeric `id`, not the GraphQL node IDs `gh pr view --json comments` returns.
     ```bash
+    # Regular comments
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body, rockets: .reactions.rocket}'
-    ```
-- Fetch inline review comments you authored:
-    ```bash
+    # Inline review comments
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
         --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, path, body, rockets: .reactions.rocket}'
-    ```
-- Fetch review summaries you authored (the body written when submitting a review): they often carry the overall instructions the inline comments assume:
-    ```bash
+    # Review summaries
     gh api --paginate "repos/<owner>/<repo>/pulls/<number>/reviews" \
         --jq '.[] | select(.user.login == env.AUTHOR and .body != "") | {id, submitted_at, body}'
     ```
-    Review bodies do not support reactions, so treat them as instructions and context for the run; the 🚀 tracking below applies only to regular and inline comments.
-- Skip any comment with `rockets > 0` in the fetches above: a 🚀 reaction marks it as already acted upon (Step 4 adds it only once the work is handled). The count is a bare total, so a 🚀 from you, from LoachBot under the same account, or from any other collaborator all hide the comment alike — 🚀 is reserved for this marker. If it has been used as ordinary emphasis, say so rather than silently skipping those comments.
-- If you resumed a `(Needs Info)` PR, fold in the answers gathered in Step 1 as clarification for the comments they reply to — they may be authored by other users, so the `$AUTHOR` filters above won't surface them.
+    Review summaries often carry the overall instructions inline comments assume. They take no reactions, so treat them as context; 🚀 tracking covers only regular and inline comments.
+- Skip comments with `rockets > 0`: Step 4 adds 🚀 once a comment is handled. The count is a bare total, so a 🚀 from anyone hides the comment; if 🚀 was used as ordinary emphasis, say so rather than silently skipping.
+- For a resumed `(Needs Info)` PR, apply Step 1's answers to the comments they reply to.
 
-Run the comment, inline-comment, and review-summary fetches in parallel. Investigate what comments refer to via [Sub-agents](#sub-agents).
+Investigate what comments refer to via [Sub-agents](#sub-agents).
 
-If there is nothing to address — no un-🚀'd comment, and no review summary submitted after the PR's newest commit (`gh pr view <number> --repo <owner>/<repo> --json commits --jq '.commits[-1].committedDate'`) — the PR is a draft for some other reason, such as work in progress. Do **not** mark it ready. Run Step 6's cleanup lines without `gh pr ready`, tell the user it was skipped and why, and go back to Step 1 for the next candidate.
+If there is nothing to address (no un-🚀'd comment, and no review summary newer than the newest commit: `gh pr view <number> --repo <owner>/<repo> --json commits --jq '.commits[-1].committedDate'`), the PR is a draft for another reason. Do **not** mark it ready. Run Step 6's cleanup without `gh pr ready`, tell the user why it was skipped, and return to Step 1.
 
 ### 4. Do the work
 
-Address all the comments you left (the ones filtered to `$AUTHOR` in Step 3). Delegate per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the change; independent comments run as concurrent sub-agents. The main thread keeps the git/reaction/ready steps.
+Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; independent comments run concurrently. The main thread keeps git, reactions and ready.
 
-Test where possible, then commit and push back to the PR: the branch already tracks the PR head from `gh pr checkout`, so a plain push suffices:
+Test where possible, then commit and push (the branch tracks the PR head):
 
 ```bash
 git add -A
-# Nothing staged means the addressed comments needed no code changes, so skip the empty commit.
+# Skip the empty commit when no code changed.
 if ! git diff --cached --quiet; then
     git commit -m "<concise message>"
     git push
 fi
 ```
 
-React with a 🚀 to each comment that was addressed, only once it has actually been handled — the change was pushed, or you verified no change is needed. A comment verified to need no code change still counts as addressed. The reaction is the persistent "already handled" marker Step 3 relies on, so never react before that point:
+React 🚀 to each comment only once handled: the change was pushed, or you verified none is needed. Step 3 relies on this marker, so never react earlier:
 
 ```bash
 # Regular PR comment:
@@ -172,31 +160,27 @@ gh api "repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions" \
     --method POST --field content="rocket"
 ```
 
-If a comment requires human judgment or a design decision that can't be resolved autonomously, leave it unreacted and continue to the next comment. If **all** comments require human judgment (none were acted upon), park the PR so later runs skip it until someone replies: post one short question naming what you need, then append ` (Needs Info)` to the title. Report this to the user and stop. Do not mark the PR as ready.
-
-Comment first, rename second. The parking rename has to be the newest event you leave behind: Step 1 treats anything posted after it as the reply that un-parks the PR, so renaming first would make your own question un-park it immediately and loop forever.
+Leave comments needing human judgment or a design decision unreacted and move on. If **all** need it, park the PR: post one short question naming what you need, then append ` (Needs Info)` to the title, report to the user and stop without marking ready. Comment first, rename second: Step 1 treats anything after the rename as the reply, so renaming first would un-park it on your own question forever.
 
 ```bash
 gh pr comment <number> --repo <owner>/<repo> --body "<one short question>"
 gh pr edit <number> --repo <owner>/<repo> --title "<original title> (Needs Info)"
 ```
 
-Finally, if the changes made deviate from what the original PR title or body described, update them to accurately reflect the work done.
+If the work deviates from the PR title or body, update them to match.
 
 ### 5. Verify CI before marking ready
 
-The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
+The script waits for checks to register, probes repeatedly before concluding there is no CI, and caps the wait at about 30 minutes:
 
 ```bash
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 ```
 
-Act on its exit code:
-
-- **0** → checks passed, or the repo has no CI. Continue to Step 6.
-- **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without marking the PR ready — it stays draft, and the next run picks it up once CI has settled.
-- **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without marking the PR ready.
-- **1** → a check failed. Read the failing log first: take the run id from the check's link (`gh pr checks <number> --repo <owner>/<repo> --json name,state,link`), then `gh run view <run-id> --repo <owner>/<repo> --log-failed`. Fix it and push again, at most two fix attempts, and do **not** mark the PR ready while checks are red. If it's still red after that, or the failure needs human judgment, park the PR so later runs skip it instead of re-picking it forever — comment then rename, exactly as in Step 4, saying which checks are failing — then stop.
+- **0** → passed, or no CI. Continue to Step 6.
+- **8** → still pending. Report the pending checks and PR URL, then stop without marking ready; a later run picks it up.
+- **7** → status unreadable. Unknown is not passing: report it and the PR URL, then stop without marking ready.
+- **1** → a check failed. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, park the PR as in Step 4 (comment naming the failing checks, then rename) and stop.
 
 ### 6. Mark the Pull Request as ready
 
@@ -208,17 +192,17 @@ git worktree remove ~/Projects/<owner>/<repo>.worktrees/pr-<number> --force
 git branch -D "$BRANCH"
 ```
 
-Then report the completed PR URL to the user:
+Then report:
 > Done: https://github.com/<owner>/<repo>/pull/<number>
 
-If any comments were left unreacted because they need human judgment (Step 4), list their `html_url`s under the Done line: the PR has left the draft pool, so this report is the only place they surface.
+List the `html_url` of any comment left unreacted (Step 4) under the Done line; the PR has left the draft pool, so this is the only place they surface.
 
 ## Rules
 
-- Work on exactly one Pull Request per run, most recently updated first. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a PR just marked ready still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/reaction/ready steps.
-- Never post comments except the single question that parks a Pull Request (Steps 4 and 5). Otherwise, react and rename only, as described above.
-- All git operations for a PR must run inside that PR's worktree: never run `git checkout`, `gh pr checkout`, or commits from the base clone.
+- One Pull Request per run. For multiple runs, repeat from Step 1 one run at a time (search lag means overlapping runs would pick the same PR); stop early on "Nothing to do". Within a run, fan out sub-agents; the main thread keeps orchestration, git, reactions and ready.
+- Never post comments except the single parking question (Steps 4 and 5); otherwise only react and rename.
+- Run all git operations for a PR inside its worktree; never `git checkout`, `gh pr checkout` or commit in the base clone.
 <!-- SHARED: one-run-per-clone -->
-- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+- One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- Keep commit messages to one concise line, following your global commit conventions.
+- Keep commit messages to one concise line, per your global commit conventions.
