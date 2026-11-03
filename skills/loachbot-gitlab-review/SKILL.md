@@ -11,26 +11,26 @@ metadata:
 ## Prerequisites
 
 - `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
-- `jq` is on `PATH`. `glab api` has no built-in filter, so the scripts beside this file parse JSON with `jq`.
-- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab — Drupal core among them. Reads need no authentication. Without it, those merge requests can still be worked on, but the issue behind them cannot be read.
-- Paths assume drupal.org's `project/` namespace. Sandboxes live under `sandbox/` instead, so set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for those; `LOACHBOT_GITLAB_HOST` likewise points the scripts at another GitLab.
+- `jq` is on `PATH`; the scripts parse JSON with it.
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab, such as Drupal core. Reads need no authentication. Without it, those issues cannot be read.
+- Paths assume the `project/` namespace. For sandboxes set `LOACHBOT_GITLAB_NAMESPACE=sandbox`; `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab.
 
-This skill never clones, never checks anything out and never writes to a branch. It reads the diff and individual files through the API, so it needs no worktree and cannot collide with any other LoachBot run — including one working on the very merge request it is reviewing.
+This skill never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request.
 
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) and `<iid>` before running them, and adapt anything that doesn't fit the merge request in front of you.
+The `bash` blocks are templates: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) and `<iid>`, and adapt anything that doesn't fit.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
-`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs may overlap, so never use a fixed `/tmp` path.
+`<tmp>` is a scratch directory made once per run with `mktemp -d`; runs may overlap, so never use a fixed `/tmp` path.
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
 
-Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
+Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -41,42 +41,42 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-A report is a claim. Verify what matters: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
 
-Four things here are not what a GitLab habit expects. Each one fails quietly rather than loudly, so they are worth knowing before the first API call rather than after.
+Four things here break GitLab habits, quietly. Know them before the first API call.
 
-- **Two hostnames, one service.** The API lives at `git.drupalcode.org`; git itself lives at `git.drupal.org`. An API path on the git host and an SSH URL on the API host both fail. Take remote URLs from the API's own `ssh_url_to_repo` instead of composing them.
-- **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in a per-issue fork at `issue/<project>-<issue-id>`. Pushes go to the fork.
-- **The pipeline is on the fork, except when it isn't.** GitLab runs a fork's merge request pipeline in the *parent* project when its author can push there, so a maintainer's own merge request keeps it on the project while a contributor's leaves it on the fork. Ask the wrong one and you get a flat `404`. Read `head_pipeline.project_id` from a single-merge-request read rather than assuming either; `source_project_id` is only the fallback for a payload that omits it.
-- **A green pipeline can hide red jobs.** Drupal.org's CI template marks jobs `allow_failure: true`, so they fail without failing the pipeline — and the pipeline, the badge and `glab ci status` all then report success while those jobs are red. *Which* jobs is per-project configuration, not a fixed set: the lint jobs usually (`cspell`, `phpcs`, `phpstan`, `stylelint`), but `eslint`, `composer` variants and even `phpunit` variants carry it on some projects. So never match on a list of names — read each job's own `allow_failure` and treat a forgiven failure as a failure.
+- **Two hostnames, one service.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Each fails on the other's host, so take remote URLs from the API's `ssh_url_to_repo` instead of composing them.
+- **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in the per-issue fork `issue/<project>-<issue-id>`. Push to the fork.
+- **The pipeline is on the fork, except when it isn't.** GitLab runs a fork's merge request pipeline in the *parent* project when the author can push there: a maintainer's runs on the project, a contributor's on the fork. The wrong one returns a flat `404`. Read `head_pipeline.project_id` from a single-merge-request read; fall back to `source_project_id` only if it is missing.
+- **A green pipeline can hide red jobs.** Drupal.org's CI template sets `allow_failure: true` on some jobs, so they fail while the pipeline, badge and `glab ci status` report success. Which jobs varies per project: usually the lint jobs (`cspell`, `phpcs`, `phpstan`, `stylelint`), sometimes `eslint`, `composer` or even `phpunit` variants. Never match on job names: read each job's `allow_failure` and treat a forgiven failure as a failure.
 
 ### The issue lives in one of two places
 
-A merge request's issue number is the tail of its fork's path: `issue/ai_ckeditor-3615852` means `3615852`. What that number *means* depends on the project — a GitLab issue iid where the queue was migrated, a drupal.org node id where it never was (Drupal core and `eck` among them) — and the two numbering spaces overlap, so reading it in the wrong world returns a real but unrelated issue rather than nothing.
+A merge request's issue number is the tail of its fork path: `issue/ai_ckeditor-3615852` means `3615852`. It is a GitLab issue iid where the queue was migrated, a drupal.org node id where it wasn't (Drupal core and `eck` among them). The numbering spaces overlap, so the wrong world returns a real but unrelated issue.
 
-Never try both and keep whichever answers. One script decides the world first and then interprets the number; `read-issue.sh`'s header explains why that order matters:
+Never try both and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number; its header explains why:
 
 ```bash
 bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
 ```
 
-It returns one JSON object either way — `source`, `title`, `status`, `actionable`, `writable`, `url`, `description` — so nothing downstream has to care which world it came from. Act on its exit code:
+It returns one JSON object either way (`source`, `title`, `status`, `actionable`, `writable`, `url`, `description`). Act on its exit code:
 
-- **0** → read. `actionable: false` means the issue is fixed, closed, postponed or already reviewed-and-tested: leave it alone. `writable: false` means `/do:` cannot be posted, so any handback goes to the user instead.
-- **6** → unreadable in the world this project belongs to. Report it; do **not** try the other world.
-- **7** → read, but it belongs to a different project, so the number was interpreted in the wrong world. Report it and discard the result.
+- **0** → read. `actionable: false` means fixed, closed, postponed or already reviewed-and-tested: leave it alone. `writable: false` means `/do:` cannot be posted, so hand back to the user instead.
+- **6** → unreadable in this project's world. Report it; do **not** try the other world.
+- **7** → read, but it belongs to a different project, so the number was read in the wrong world. Report it and discard the result.
 
-Two `glab api` habits matter here: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents, and `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
+Two `glab api` habits: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents; `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
 <!-- /SHARED: drupal-gotchas -->
 ## Workflow
 
 ### 1. Pick one merge request
 
-**If the user named one** (a URL like `https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23`, or `ai_ckeditor!23`), review that one. This is the common case; skip the search.
+**If the user named one** (a URL like `https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23`, or `ai_ckeditor!23`), review that one and skip the search.
 
 **Otherwise**, look for merge requests waiting on you:
 
@@ -87,9 +87,9 @@ glab api --hostname git.drupalcode.org \
     jq -r '.[] | "\(.references.full)\t\(.author.username)\t\(.title)"'
 ```
 
-Swap `reviewer_id` for `assignee_id` to catch the projects that assign rather than request review. If both come back empty, report "Nothing to review" and stop.
+Also try `assignee_id` instead of `reviewer_id`, for projects that assign rather than request review. If both are empty, report "Nothing to review" and stop.
 
-Never review your own merge request without saying so. If the author is you, review it anyway when asked — a second pass on your own work is useful — but open the summary with the fact that you wrote it, so nobody mistakes it for an independent sign-off.
+If the author is you, review it when asked, but open the summary by saying you wrote it, so nobody mistakes it for an independent sign-off.
 
 ### 2. Gather the context
 
@@ -97,26 +97,26 @@ Never review your own merge request without saying so. If the author is you, rev
 bash <this skill's directory>/scripts/review-context.sh <project> <iid> > <tmp>/review.json
 ```
 
-One JSON object: the merge request, its `diff_refs`, the issue's number, the changed files with their diffs, every pipeline job and the failing ones separately, and the threads already on the merge request. Read its header for the shape. Exit **5** means the merge request could not be read — report it and stop.
+One JSON object: the merge request, its `diff_refs`, the issue number, changed files with diffs, every pipeline job, the failing ones, and existing threads; the header documents the shape. Exit **5** means the merge request could not be read: report it and stop.
 
-Read the existing threads now, before forming any opinion, so this review does not repeat one an earlier review already left:
+Read the existing threads before forming any opinion, so you don't repeat an earlier review:
 
 ```bash
 jq -r '.discussions[] | "\(.id) \(if .resolved then "resolved" else "open" end) \(.path // "-"):\(.line // "-") \(.author): \(.body)"' <tmp>/review.json
 ```
 
-Then resolve that number to the actual issue, which may be in GitLab or on drupal.org:
+Then resolve the issue:
 
 ```bash
 ISSUE_REF=$(jq -r '.issue_ref // empty' <tmp>/review.json)
 [ -n "$ISSUE_REF" ] && bash <this skill's directory>/scripts/read-issue.sh <project> "$ISSUE_REF" > <tmp>/issue.json
 ```
 
-See [The issue lives in one of two places](#the-issue-lives-in-one-of-two-places) for the exit codes and why the two must never be tried interchangeably. A null `issue_ref`, or exit **6**, means you are reviewing without the requirement — do it anyway, and say so in the summary, because "does this match the issue" is the first question below and you will not have been able to answer it. Exit **7** means the number resolved to a different project's issue: discard it and treat the requirement as unavailable rather than reviewing against the wrong one.
+Exit codes are in [The issue lives in one of two places](#the-issue-lives-in-one-of-two-places). A null `issue_ref`, or exit **6**, means reviewing without the requirement: do it anyway, and say in the summary that you could not check it against the issue. Exit **7** means a different project's issue: discard it and treat the requirement as unavailable.
 
 ### 3. Read what was actually asked
 
-The issue is the requirement; the merge request description is usually one line. Before judging the code, settle what the change is *for*:
+The issue is the requirement; the merge request description is usually one line. Before opening any file, answer:
 
 - What does the issue ask for, in one sentence?
 - What does the diff do that the issue did not ask for?
@@ -126,47 +126,46 @@ The issue is the requirement; the merge request description is usually one line.
 jq -r '"\(.source) · \(.status)\n\n\(.title)\n\n\(.description)"' <tmp>/issue.json
 ```
 
-Scope is the most common real finding and the easiest to miss once you are reading code. Answer these three before opening a single file.
+Scope is the most common real finding and the easiest to miss once reading code.
 
 ### 4. Review the diff
 
-The diff is already in `<tmp>/review.json`. Fetch whole files only when the hunks are not enough — nothing here clones:
+The diff is in `<tmp>/review.json`. Fetch whole files only when the hunks are not enough:
 
 ```bash
 jq -r '.files[] | "=== \(.new_path)\n\(.diff)"' <tmp>/review.json
 
-# A whole file as the branch leaves it. <path> is URL-encoded: dots become %2E and
-# slashes %2F.
+# <path> is URL-encoded: dots become %2E, slashes %2F.
 glab api --hostname git.drupalcode.org \
     "projects/<namespace>%2F<project>/repository/files/<path>/raw?ref=<head-sha>"
 ```
 
-Split the review across sub-agents by *concern*, not by file, and launch them together per [Sub-agents](#sub-agents) — they are all reads. One each for correctness, Drupal API conventions, tests and security is a reasonable default; give each the diff and the issue summary from Step 3.
+Split the review across sub-agents by *concern*, not file, launched together per [Sub-agents](#sub-agents). A reasonable default is one each for correctness, Drupal API conventions, tests and security, each given the diff and the Step 3 summary.
 
-What to look for, beyond ordinary code review:
+Beyond ordinary code review, check:
 
-- **Scope** — changes the issue did not ask for. Unrelated lint fixes, formatting sweeps and version bumps belong in their own issue, and saying so is a legitimate review finding.
-- **`*.info.yml`** — `core_version_requirement` covers the target branch; dependencies use the `project:module` form; no `version` key in a contrib module (drupal.org adds it on packaging).
-- **`composer.json`** — constraints agree with `core_version_requirement`, and anything new is actually required.
-- **Services** — constructor injection, not `\Drupal::` in classes that can take a container. New services declared in `*.services.yml` with their dependencies.
-- **Translation** — user-facing strings go through `t()` or `StringTranslationTrait`; no concatenation inside the translatable string, placeholders instead.
-- **Access and input** — routes carry `_permission`, `_entity_access` or `_custom_access`; database queries are parameterized; no user input reaching `#markup` unescaped.
-- **Render and cache** — render arrays over raw markup, with `#cache` contexts and tags that match what the output actually varies on.
-- **Config** — new config keys have schema in `config/schema/`; a change to the shape of existing config comes with a `hook_update_N`.
-- **Hooks** — correct implementation name, and the `#[Hook]` attribute where the target branch supports it.
-- **Tests** — new behaviour is covered, and the test extends the right base class for what it touches.
-- **Deprecations** — nothing the target branch has deprecated, and nothing removed in the next major.
-- **Leftovers** — no `dpm()`, `kint()`, `var_dump()`, `dd()`, commented-out blocks or stray `@todo` without an issue number.
+- **Scope**: unrelated lint fixes, formatting sweeps and version bumps belong in their own issue; saying so is a legitimate finding.
+- **`*.info.yml`**: `core_version_requirement` covers the target branch; dependencies use `project:module`; no `version` key in contrib (drupal.org adds it on packaging).
+- **`composer.json`**: constraints agree with `core_version_requirement`; anything new is actually required.
+- **Services**: constructor injection, not `\Drupal::` in classes that can take a container; new services declared in `*.services.yml` with their dependencies.
+- **Translation**: user-facing strings go through `t()` or `StringTranslationTrait`, with placeholders, not concatenation.
+- **Access and input**: routes carry `_permission`, `_entity_access` or `_custom_access`; queries are parameterized; no user input reaches `#markup` unescaped.
+- **Render and cache**: render arrays over raw markup, with `#cache` contexts and tags matching what the output varies on.
+- **Config**: new keys have schema in `config/schema/`; a shape change to existing config comes with a `hook_update_N`.
+- **Hooks**: correct implementation name, and the `#[Hook]` attribute where the target branch supports it.
+- **Tests**: new behaviour is covered, extending the right base class.
+- **Deprecations**: nothing the target branch has deprecated or the next major removes.
+- **Leftovers**: no `dpm()`, `kint()`, `var_dump()`, `dd()`, commented-out blocks or `@todo` without an issue number.
 
 ### 5. Read the pipeline, not the badge
 
-`failing_jobs` from Step 2 is the authoritative list. A merge request can show a green pipeline with forgiven jobs red — which jobs varies by project, and includes test suites on some — so check that array rather than the rollup, and raise a forgiven failure as a finding like any other.
+`failing_jobs` from Step 2 is authoritative, not the rollup. Raise a forgiven failure as a finding like any other.
 
 ```bash
 jq -r '.failing_jobs[] | "\(.name): \(.status)\(if .allow_failure then " (forgiven by the pipeline)" else "" end) job=\(.id)"' <tmp>/review.json
 ```
 
-Read a job's log before attributing a failure to the change — a job can be red for reasons that predate the branch. Read it from `pipeline_project_id`, not the fork, because the pipeline may have run in the parent:
+Read a job's log before blaming the change, since a failure can predate the branch. Read it from `pipeline_project_id`, not the fork:
 
 ```bash
 PIPELINE_PROJECT=$(jq -r '.pipeline_project_id' <tmp>/review.json)
@@ -175,23 +174,23 @@ glab api --hostname git.drupalcode.org "projects/$PIPELINE_PROJECT/jobs/<job-id>
 
 ### 6. Post the findings
 
-A finding tied to a line goes inline, as a resolvable thread. Write the body to a file — review comments are markdown, and the shell mangles backticks and newlines:
+A finding tied to a line goes inline as a resolvable thread. Write the body to a file, since the shell mangles markdown backticks and newlines:
 
 ```bash
 printf '%s\n' "This runs on every request; consider caching it." > <tmp>/finding.md
 bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <path> <new-line> <tmp>/finding.md
 ```
 
-Exit **1** covers both ways this goes wrong:
+Exit **1** means one of:
 
-- GitLab rejected the position outright — most often a context line passed without its old-side line number. A line that exists on both sides of the diff needs both: pass the old line as the sixth argument. The hunk header (`@@ -4,5 +4,6 @@`) carries the pair.
-- GitLab accepted it but dropped the position, leaving an ordinary thread in the Overview tab rather than a comment on the line. The script checks for this and treats it as a failure, because the API returns `201` either way.
+- GitLab rejected the position, usually a context line without its old-side number. A line on both sides of the diff needs both: pass the old line as the sixth argument. The hunk header (`@@ -4,5 +4,6 @@`) carries the pair.
+- GitLab returned `201` but dropped the position, leaving a plain Overview thread; the script detects this and fails.
 
-Either way, do not retry with a guessed line number — that lands a comment on the wrong code, which is worse than not commenting. Fix the line pair or move the point into the summary.
+Never retry with a guessed line number; a comment on the wrong code is worse than none. Fix the line pair or move the point into the summary.
 
-Exit **5** means the merge request could not be read at all this time, even though Step 2 managed it — so almost always a transient API failure rather than anything about the position. Retry that one comment once; if it fails again, move the point into the summary and say there that the inline comment could not be posted.
+Exit **5** means the merge request could not be read, almost always a transient API failure since Step 2 succeeded. Retry once; if it fails again, move the point into the summary and note the inline comment could not be posted.
 
-A finding an existing thread already raises gets a reply in that thread, not a new one:
+A finding an existing thread already raises gets a reply there, not a new thread:
 
 ```bash
 glab api --hostname git.drupalcode.org -X POST \
@@ -199,19 +198,19 @@ glab api --hostname git.drupalcode.org -X POST \
     -F "body=@<tmp>/finding.md"
 ```
 
-Then one summary note, and only one:
+Then exactly one summary note:
 
 ```bash
 glab mr note create <iid> -R git.drupalcode.org/<namespace>/<project> < <tmp>/summary.md
 ```
 
-The summary says, in this order: whether the change does what the issue asked, anything out of scope, the findings that block, the findings that are suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly — an unordered pile of twelve comments reads as a rejection even when ten of them are optional.
+In order: whether the change does what the issue asked, anything out of scope, blocking findings, suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly; an unordered pile reads as a rejection even when most are optional.
 
-Say plainly when the change is good. A review that only ever lists problems trains people to ignore it.
+Say plainly when the change is good. A review that only lists problems trains people to ignore it.
 
 ### 7. Hand it back
 
-Only when something blocks, move the issue to needs-work. The `/do:` lines are drupal.org bot commands, so post them **verbatim**:
+Only when something blocks, and only when `writable` was `true` in Step 2, move the issue to needs-work. The `/do:` lines are drupal.org bot commands, so post them **verbatim**:
 
 ```bash
 glab issue note <issue-id> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'
@@ -222,15 +221,15 @@ EOF
 )"
 ```
 
-Only when `writable` was `true` in Step 2. A drupal.org-only issue has no `/do:` path — its status moves through the web UI — so do not attempt this. Report the findings, link the issue's `url`, and leave the status change to the user.
+A drupal.org-only issue has no `/do:` path, so do not attempt this: report the findings, link the issue's `url`, and leave the status change to the user.
 
-When nothing blocks, **stop**. Do not set `state::rtbc`, do not approve, do not merge: say the review found nothing blocking and let the user decide. Marking somebody else's work ready to commit is not a call this skill gets to make.
+When nothing blocks, **stop**. Do not set `state::rtbc`, approve or merge: say nothing blocks and let the user decide.
 
 ## Rules
 
-- Review exactly one merge request per run. If asked to review several, repeat the whole workflow per merge request, and keep each review's comments to its own merge request.
-- Read-only against git: never clone, check out, push, rebase or merge. Everything comes through the API. This is also why this skill may run alongside any other LoachBot run, including on the same project.
-- Never approve, never set `state::rtbc`, never merge. The most this skill does to a state is `state::needsWork`, and only when a finding genuinely blocks.
-- Post inline comments only on lines the diff actually touches, and only one summary note per run. Do not re-post a finding an existing thread already raises (Step 2); reply in that thread instead (Step 6).
+- Review exactly one merge request per run. For several, repeat the whole workflow per merge request, keeping each review's comments on its own merge request.
+- Read-only against git: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run.
+- Never approve, set `state::rtbc` or merge. The most this skill sets is `state::needsWork`, and only when a finding genuinely blocks.
+- Post inline comments only on lines the diff touches, and one summary note per run. Reply in an existing thread rather than re-posting its finding (Steps 2 and 6).
 - Separate blocking findings from suggestions, every time.
-- Judge the change against the issue and the target branch, not against how you would have written it. Style preferences that `phpcs` does not enforce are not findings.
+- Judge the change against the issue and the target branch, not how you would have written it. Style preferences `phpcs` does not enforce are not findings.

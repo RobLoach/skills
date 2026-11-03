@@ -12,24 +12,24 @@ metadata:
 <!-- SHARED: prerequisites -->
 ## Prerequisites
 
-- `gh` is authenticated: run `gh auth status` first; if it fails, report that and stop.
-- `~/Projects` is where clones and worktrees go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
+- Run `gh auth status` first; if it fails, report that and stop.
+- Clones and worktrees go in `~/Projects` (created if missing), or in `LOACHBOT_PROJECTS_DIR` if the user prefers another directory.
 <!-- /SHARED: prerequisites -->
 
 <!-- SHARED: conventions -->
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<owner>`, `<repo>`, and `<number>` before running them, and adapt anything that doesn't fit the repository in front of you.
+The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 <!-- /SHARED: conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
 
-Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
+Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -40,7 +40,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-A report is a claim. Verify what matters: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command.
 <!-- /SHARED: sub-agents -->
 
 ## Workflow
@@ -48,92 +48,82 @@ A report is a claim. Verify what matters: read the diff or re-run the command.
 ### 1. Find one actionable issue
 
 <!-- SHARED: search-scoping -->
-The search spans every repository by default. Scope it first, in this order:
+The search spans every repository unless scoped, in this order:
 
-1. A repo named in the prompt or skill arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
-2. Otherwise, if the user asked to work "on this project" and the current working directory is a git repo, use its `origin` remote: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`, and add `--repo` for that.
-3. Otherwise search account-wide, as below.
+1. A repo named in the prompt or arguments (URL or `owner/repo`): add `--repo <owner>/<repo>`.
+2. Else, if the user said "on this project" inside a git repo, add `--repo` for its `origin`: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`.
+3. Else search account-wide, as below.
 <!-- /SHARED: search-scoping -->
 
 ```bash
 # Issues created by and assigned to me, newest activity first.
-# Add `--repo <owner>/<repo>` when the run is scoped to one repository.
 gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit=30 \
     --json number,title,url,repository \
     --jq '.[] | {number, title, url, repo: .repository.nameWithOwner}'
 ```
 
-If no items are found, report "Nothing to do" and stop.
+If none are found, report "Nothing to do" and stop.
 
-For each issue (most-recently-updated first), decide whether it's actionable from the ` (Needs Info)` title suffix:
+Walk the issues newest first. A title without ` (Needs Info)` is actionable. One with it was parked by an earlier run (Step 4); check for answers:
 
-- Title does **not** end with ` (Needs Info)` → actionable.
-- Title ends with ` (Needs Info)` → a previous run asked a question and parked it (Step 4). Check for answers:
-    ```bash
-    bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number>
-    ```
-    Act on its exit code:
-    - **0** → answered; the printed replies are clarification for Step 2. The issue is actionable.
-    - **6** → nobody has answered yet. Skip the issue.
-    - **5** → nothing to measure replies against: either the issue could not be read, or the suffix was added by hand. Skip the issue and mention it to the user.
+```bash
+bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number>
+```
 
-Pick the first actionable issue. If none are actionable, report "Nothing to do" and stop.
+- **0** → answered; the printed replies are clarification for Step 2. Actionable.
+- **6** → no answer yet. Skip it.
+- **5** → the issue could not be read, or the suffix was added by hand. Skip it and tell the user.
 
-Search results can lag behind reality, so a just-finished issue may still appear on an immediate re-run. Before starting, confirm the picked issue is still open and assigned to you:
+Pick the first actionable issue; if there is none, report "Nothing to do" and stop.
+
+Search results lag, so confirm the pick is still open and assigned to you:
 
 ```bash
 gh api "repos/<owner>/<repo>/issues/<number>" --jq '{state, assignees: [.assignees[].login]}'
 ```
 
-If `state` is not `open`, or your login is not among the assignees, skip it and evaluate the next candidate.
+If it is not `open` or you are not an assignee, try the next candidate.
 
-When the picked issue was parked, strip the suffix from its title before doing the work:
+If the pick was parked, strip the suffix first:
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
 ```
 
-Once you pick an issue, report its URL to the user immediately:
+Report the pick to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/issues/<number>
 
 ### 2. Understand the issue
 
-- Read the full body: `gh api repos/<owner>/<repo>/issues/<number>`
-- Read the comments authored by the logged-in user: those are the instructions to trust:
+- Read the body: `gh api repos/<owner>/<repo>/issues/<number>`
+- Read the logged-in user's comments; those are the instructions to trust:
     ```bash
-    # `export` so the filter can read the login as `env.AUTHOR`.
+    # `export` so the filter can read it as `env.AUTHOR`.
     export AUTHOR
     AUTHOR=$(gh api user --jq '.login')
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
         --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body}'
     ```
-- If you resumed a `(Needs Info)` issue, also read the answers gathered in Step 1: treat them as clarification for the question that was asked, not as new open-ended instructions.
-- Identify what work is needed from the issue body, the author's comments, and any clarification answers.
+- For a resumed issue, treat Step 1's answers as clarification of the question asked, not new open-ended instructions.
 
-Investigate through sub-agents fanned out in parallel, keeping file contents out of the main thread — see [Sub-agents](#sub-agents).
+Investigate through parallel sub-agents, keeping file contents out of the main thread (see [Sub-agents](#sub-agents)).
 
 ### 3. Do the work
 
-Each issue gets its own git worktree so branches can never bleed into each other. The base clone at `~/Projects/<owner>/<repo>` stays on the default branch; per-issue worktrees live under `~/Projects/<owner>/<repo>.worktrees/issue-<number>` and are deleted after the run is complete.
-
-The branch name is **deterministic** — `fix/issue-<number>` — so the same issue always maps to the same branch across runs, regardless of any title edits.
+Each issue gets its own worktree at `~/Projects/<owner>/<repo>.worktrees/issue-<number>` on branch `fix/issue-<number>`, the same across runs whatever the title. The base clone `~/Projects/<owner>/<repo>` stays on the default branch.
 
 ```bash
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
 cd "$WT"
 ```
 
-The script clones on first use, recreates the worktree from scratch, resumes from `origin/fix/issue-<number>` when an earlier run pushed one, rebases onto the default branch, and syncs submodules. Read its header for the details.
+The script clones if needed, recreates the worktree, resumes a pushed `origin/fix/issue-<number>`, rebases onto the default branch and syncs submodules. On failure:
 
-Recovery paths, by exit code:
+- **4** — another live worktree has the branch. Run `git worktree remove <stale-path> --force` and `git worktree prune`, then rerun the script.
+- **3** — the rebase conflicted and was aborted. Park it as in Step 4 and stop; never work in a half-rebased worktree.
+- Any other non-zero — stderr names the failing command. Report it and stop; do not force through.
 
-- **4** — the branch is checked out by another, still-live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and run the script again.
-- **3** — the rebase conflicted and has already been aborted. Handle it like Step 4 (comment + `(Needs Info)`) and stop; never keep working in a half-rebased worktree.
-- Any other non-zero — the worktree could not be created, for instance because the local branch diverged or the clone is unhealthy. The script names the failing command on stderr. Stop and report it; do not force through it.
-
-Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix; the main thread keeps the git/push/PR steps.
-
-Implement the fix, test where possible, then commit (still inside `$WT`):
+Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then commit inside `$WT`:
 
 ```bash
 git add -A
@@ -144,48 +134,43 @@ else
 fi
 ```
 
-If nothing was staged, the issue needed no code change — it was already fixed, or it turned out to be a question rather than a defect. Do not open an empty Pull Request: `gh pr create` rejects a branch with no commits anyway. Handle it like Step 4 instead (a comment saying what you found, then ` (Needs Info)`) and stop, so a human decides whether to close the issue.
+If nothing was staged (already fixed, or a question rather than a defect), open no Pull Request. Park it as in Step 4, with a comment saying what you found, and stop so a human decides whether to close it.
 
-Then push and make sure a PR exists:
+Push and make sure a PR exists:
 
 ```bash
-# `--force-with-lease` covers both cases in one line: it creates the branch on a first
-# run, and replaces the remote history when the rebase above rewrote a resumed branch -
-# while still refusing the push if someone else moved the branch in the meantime.
+# Creates the branch on a first run, replaces history a rebase rewrote, and still
+# refuses if someone else moved the branch.
 git push --force-with-lease -u origin HEAD
 
-# A re-run may already have an open PR for this branch: only create one if none exists.
-# Keep `--head` a bare branch name. It matches fork-based PRs too, whereas the
+# Reuse an open PR from an earlier run. Keep `--head` a bare branch name; the
 # `<owner>:<branch>` form matches nothing here.
 PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
 if [ -z "$PR_NUMBER" ]; then
-    # `gh pr create` prints the new Pull Request's URL; its last segment is the number.
-    # Body: one short paragraph, then "Fixes #<number>".
+    # Body: one short paragraph, then "Fixes #<number>". Prints the PR URL.
     PR_URL=$(gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me)
     PR_NUMBER=${PR_URL##*/}
 fi
 ```
 
-If that `git push` fails for lack of push access, handle it like Step 4 (comment + `(Needs Info)`) and stop. An issue you can be assigned to is almost always on a repository you can push to, so this is a permissions problem for a human, not something to work around with a fork.
+If the push fails for lack of access, park it as in Step 4 and stop; it is a permissions problem for a human, not a reason to fork.
 
-Then verify CI. The script waits out the delay before checks register, probes several times before believing a repo has no CI, and bounds the wait at about 30 minutes:
+Verify CI (the script waits up to about 30 minutes):
 
 ```bash
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER"
 ```
 
-Act on its exit code:
-
-- **0** → checks passed, or the repo has no CI. Continue.
-- **8** → still pending after the full wait. Report the pending checks and the PR URL to the user, then stop this run without un-assigning the issue — the next run picks it up once CI has settled.
-- **7** → the check status could not be read at all. Unknown is not passing: report it and the PR URL, then stop without un-assigning the issue.
-- **1** → a check failed. Read the failing log first: take the run id from the check's link (`gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`), then `gh run view <run-id> --repo <owner>/<repo> --log-failed`. Fix it and push again, at most two fix attempts, and do **not** un-assign the issue while checks are red. If it's still red after that, or the failure needs human judgment, handle it like Step 4 (comment + `(Needs Info)`) and stop.
+- **0** → passed, or no CI. Continue.
+- **8** → still pending. Report the pending checks and PR URL, then stop without un-assigning; a later run picks it up.
+- **7** → status unreadable; unknown is not passing. Report it and the PR URL, then stop without un-assigning.
+- **1** → a check failed. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, park it as in Step 4 and stop.
 
 ### 4. When the task is unclear
 
-If you don't know what to do or need clarification, post a short question as a comment and append ` (Needs Info)` to the issue title, then stop. Do **not** un-assign. The title rename is what later runs use to find your question and its answers (Step 1).
+Post a short question as a comment, then append ` (Needs Info)` to the title and stop. Do **not** un-assign.
 
-Comment first, rename second. The parking rename has to be the newest event you leave behind: Step 1 treats anything posted after it as the reply that un-parks the issue, so renaming first would make your own question un-park it immediately and loop forever.
+Comment first, rename second: Step 1 treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop.
 
 ```bash
 gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
@@ -194,7 +179,7 @@ gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs In
 
 ### 5. Un-assign when done
 
-After completing work successfully, un-assign the issue — no other comments — then remove the worktree and its local branch (already pushed, so nothing is lost):
+Un-assign silently, then remove the worktree and its already-pushed local branch:
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee @me
@@ -203,15 +188,15 @@ git worktree remove ~/Projects/<owner>/<repo>.worktrees/issue-<number> --force
 git branch -D fix/issue-<number>
 ```
 
-Then report the completed PR URL to the user:
+Report the PR to the user:
 > Done: https://github.com/<owner>/<repo>/pull/<pr-number>
 
 ## Rules
 
-- Work on exactly one issue per run. If asked to run multiple times, repeat the entire workflow from Step 1 after each completed run, one run at a time — search results lag behind reality, so a just-finished issue still appears on an immediate re-run and two overlapping runs would both pick it. Stop early when a run reports "Nothing to do". Within a single run, delegate per [Sub-agents](#sub-agents) and fan independent investigation out concurrently; the main thread keeps orchestration and the git/PR/un-assign steps.
-- Never post comments except to ask for clarification (see Step 4). Un-assign silently.
-- All git operations for an issue must run inside that issue's worktree: never run `git checkout`, branch creation, or commits from the base clone.
+- One issue per run. For multiple runs, repeat from Step 1 one at a time, never overlapping, since lagging search results would let two runs pick the same issue. Stop early on "Nothing to do". Within a run, fan investigation out to sub-agents; the main thread keeps the git, PR and un-assign steps.
+- Never comment except to ask for clarification (Step 4).
+- Run all git operations for an issue inside its worktree; never check out, branch or commit in the base clone.
 <!-- SHARED: one-run-per-clone -->
-- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+- One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
 - Keep commit messages to one concise line, following your global commit conventions.

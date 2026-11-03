@@ -10,27 +10,27 @@ metadata:
 
 ## Prerequisites
 
-- `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
-- `jq` is on `PATH`. `glab api` has no built-in filter, so the scripts beside this file parse JSON with `jq`.
-- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` matters only for a project whose issue queue never moved to GitLab — Drupal core among them. There it is the only way to see what the queue already holds, and Step 3 says what to do without it. Reads need no login.
-- Paths assume drupal.org's `project/` namespace. Sandboxes live under `sandbox/` instead, so set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for those; `LOACHBOT_GITLAB_HOST` likewise points the scripts at another GitLab.
-- SSH access to `git.drupal.org`, which is what the clone in Step 2 uses.
-- `~/Projects` is where clones go by default; `LOACHBOT_PROJECTS_DIR` overrides it. It is created if missing, so change it only if the user prefers another directory.
+- `glab` authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
+- `jq` on `PATH`; the scripts parse `glab api` JSON with it.
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH`, needed only for projects whose queue never moved to GitLab, such as Drupal core (see Step 3). Reads need no login.
+- Paths assume the `project/` namespace. For sandboxes set `LOACHBOT_GITLAB_NAMESPACE=sandbox`; `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab.
+- SSH access to `git.drupal.org`, used by the clone in Step 2.
+- Clones go in `~/Projects` (created if missing); `LOACHBOT_PROJECTS_DIR` overrides it.
 
 ## Conventions
 
-The `bash` blocks below are templates, not literals: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`) and `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) before running them, and adapt anything that doesn't fit the project in front of you.
+`bash` blocks are templates: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`) and `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set), and adapt to the project.
 
-The longer sequences live in `scripts/` next to this `SKILL.md`, invoked as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+Longer sequences live in `scripts/`, invoked as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
-`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs on different projects may overlap, so never use a fixed `/tmp` path.
+`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs may overlap, so never use a fixed `/tmp` path.
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents do the reading, searching and editing. Use one whenever you would read a file to learn how something works, need more than two searches, make a change that takes more than a sentence to describe, or run a build, tests or a linter and react to the output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
 
-Use a read-only investigator for questions and an editing agent for changes, whatever your harness calls them. Read-only sub-agents cannot collide, so launch them together in one message rather than one after another. Only two things stay sequential: anything that writes (`git`, builds, formatters, codegen), and a sub-agent whose prompt needs an earlier one's answer.
+Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -41,42 +41,40 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-A report is a claim. Verify what matters: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command.
 <!-- /SHARED: sub-agents -->
 
 ## How drupal.org differs
 
-Planning here is not planning for a GitHub repository with different URLs. Four differences change what a plan can contain and where it can land, and each of them fails quietly rather than loudly.
+Four differences change what a plan can contain and where it lands, and each fails quietly.
 
-- **Two hostnames, one service.** The API lives at `git.drupalcode.org`; git itself lives at `git.drupal.org`. An API path on the git host and an SSH URL on the API host both fail. Take clone URLs from the API's own `ssh_url_to_repo`, which is what `scripts/sync-project-clone.sh` does rather than composing one from the host.
-- **The issue queue is in one of two places.** Most of contrib had its queue migrated into GitLab, where issues are served as *work items* at `/-/work_items/<iid>`. Drupal core and a few others — `eck` among them — never migrated and keep theirs on drupal.org, which has no API to file against. Step 3 settles which before anything is drafted, because it decides whether this skill can file the plan or only hand it over.
-- **A release is a branch, not a trunk.** A contrib project carries a branch per minor — `1.4.x`, `1.5.x` — with the default branch out in front of the newest supported one, and a tag per release. So *which branch does this land on* is part of each issue rather than an afterthought: the same fix on `1.4.x` and on the default branch is two different pieces of work, and a plan that never says which one it means is a plan a contributor has to guess at.
-- **Issue metadata is the project's own labels.** drupal.org's GitLab uses `category::bug|feature|task|support|plan`, `priority::critical|major|normal|minor`, `state::*` and `why::*` — but which of those a given project has actually defined varies, and so do the spellings. Step 3 reads the real list and Step 7 applies nothing outside it.
+- **Two hostnames.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Mixing them fails. Take clone URLs from the API's `ssh_url_to_repo`, as `scripts/sync-project-clone.sh` does.
+- **The queue is in one of two places.** Most contrib queues migrated into GitLab as *work items* at `/-/work_items/<iid>`. Drupal core and a few others (`eck`) stayed on drupal.org, which has no API to file against. Step 3 settles which, deciding whether this skill can file the plan or only hand it over.
+- **A release is a branch.** Contrib carries a branch per minor (`1.4.x`, `1.5.x`), the default branch ahead of the newest supported one, and a tag per release. The same fix on `1.4.x` and on the default branch is two pieces of work, so each issue names its branch.
+- **Metadata is the project's own labels.** drupal.org's GitLab uses `category::bug|feature|task|support|plan`, `priority::critical|major|normal|minor`, `state::*` and `why::*`, but which exist and how they are spelled varies. Step 3 reads the real list; Step 7 applies nothing outside it.
 
-Every issue this skill files ends with an `AI-Generated: Yes` line; see [Rules](#rules).
+Every filed issue ends with `AI-Generated: Yes`; see [Rules](#rules).
 
-Two `glab api` habits matter here: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents, and `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
+`glab api`: `-f` sends a plain string, `-F` types its value and reads `@path` as file contents; `--paginate` prints one JSON array per page, so merge with `jq -s 'add'`.
 
 ## Workflow
 
 ### 1. Resolve the project
 
-Determine which drupal.org project to plan for, in this order:
+In this order:
 
-1. A project named in the prompt or skill arguments: a machine name (`ai_ckeditor`), a `https://www.drupal.org/project/<project>` URL, or a `https://git.drupalcode.org/<namespace>/<project>` URL. Take the machine name out of it.
-2. Otherwise, if the current working directory is a drupal.org checkout, read it off the remote:
+1. A project in the prompt or arguments: a machine name (`ai_ckeditor`), a `https://www.drupal.org/project/<project>` URL, or a `https://git.drupalcode.org/<namespace>/<project>` URL. Extract the machine name.
+2. Otherwise, if the working directory is a drupal.org checkout, read it off the remote:
     ```bash
-    # Last path segment of the first drupal.org remote, minus `.git`, minus the trailing
-    # `-<issue-id>` an issue fork carries. Machine names use underscores, never hyphens,
-    # so that last substitution cannot eat part of a real one.
+    # Strip `.git` and an issue fork's `-<issue-id>`; machine names never contain hyphens.
     git remote -v |
         awk '/git\.drupal(code)?\.org/ {print $2}' |
         sed -E 's#\.git$##; s#.*/##; s#-[0-9]+$##' |
         head -n 1
     ```
-3. Otherwise ask the user for one.
+3. Otherwise ask the user.
 
-Do not proceed without one. Everything below takes the machine name alone — `ai_ckeditor`, never `project/ai_ckeditor`. An issue fork checkout (`issue/<project>-<id>`) resolves to the same machine name, since the plan belongs to the project rather than to somebody's fork of it.
+Do not proceed without one. An issue fork (`issue/<project>-<id>`) resolves to the project's machine name; the plan belongs to the project.
 
 ### 2. Get the latest code
 
@@ -89,15 +87,15 @@ cd "$CLONE"
 
 Act on its exit code:
 
-- **5** → the clone holds local work: uncommitted changes, or commits the remote default branch does not have. Either way it's notes, an experiment or a stash-in-progress. Report what the script printed and stop, letting the user decide what to do with it. Never clobber it — `~/Projects/drupalcode/<project>` may well be their own working clone rather than a scratch one.
-- **6** → the project could not be read. Check the machine name and the namespace (a sandbox needs `LOACHBOT_GITLAB_NAMESPACE=sandbox`), then report it and stop.
+- **5** → the clone holds local work (uncommitted changes or commits the remote default branch lacks). Report what the script printed and stop; the user decides. Never clobber it — it may be their own working clone.
+- **6** → the project could not be read. Check the machine name and namespace (a sandbox needs `LOACHBOT_GITLAB_NAMESPACE=sandbox`), then report it and stop.
 - Any other non-zero → the script names the failing git command on stderr. Report it; do not force through it.
 
-The script names the project remote `upstream`, the way `loachbot-gitlab-issue` and `loachbot-gitlab-mr` do, so the three skills can share one clone. It leaves an existing clone's remotes alone.
+The script names the project remote `upstream`, like `loachbot-gitlab-issue` and `loachbot-gitlab-mr`, so the three share one clone. It leaves an existing clone's remotes alone.
 
 ### 3. Read the queue, the releases and the labels
 
-A plan that re-files what the queue already holds is worse than no plan, so read the queue before reading the code:
+Read the queue before the code, so the plan does not re-file what it already holds:
 
 ```bash
 bash <this skill's directory>/scripts/project-context.sh <project> > <tmp>/plan-context.json
@@ -110,44 +108,42 @@ Act on its exit code:
 - **0** → read. Everything below works from `<tmp>/plan-context.json`.
 - **6** → the project could not be read on the API host. Report it and stop.
 
-Then branch on `issue_queue`, because it decides where the plan can go:
+Then branch on `issue_queue`:
 
-- `"gitlab"` → the ordinary case. `open_issues`, `recently_closed` and `open_merge_requests` are what Step 6 checks candidates against, and `labels` is the only list Step 7 may apply from.
-- `"drupal.org"` → this project's queue never moved to GitLab, so there is nothing to file against through the API. Say so early, and plan anyway: the plan is still worth having, it just gets handed to the user to file. The queue is only readable through the `drupalorg` CLI, which is the one thing standing between the plan and a pile of duplicates:
+- `"gitlab"` → the ordinary case. Step 6 checks candidates against `open_issues`, `recently_closed` and `open_merge_requests`; Step 7 applies only from `labels`.
+- `"drupal.org"` → nothing to file against through the API. Say so early and plan anyway; the plan is handed to the user to file. The queue is readable only through the `drupalorg` CLI, the sole duplicate check:
     ```bash
     drupalorg issue:search <project> "<two or three keywords>" --status=all --limit=20 --format=llm
     ```
-    Without `drupalorg` installed, say plainly that no duplicate check was possible and that every item needs checking by hand before filing.
+    Without `drupalorg`, say plainly that no duplicate check was possible and every item needs checking by hand before filing.
 
-`capped: true` means `open_issues` is one page rather than the whole queue — drupal.org queues run to hundreds. Treat the list as a sample, say so when presenting the plan, and have Step 6 search per candidate rather than trusting it.
+`capped: true` means `open_issues` is one page, not the whole queue. Treat it as a sample, say so when presenting the plan, and search per candidate in Step 6.
 
-`archived: true` is worth raising before going further: planning work into an archived project is usually not what the user meant.
+If `archived: true`, raise it before going further: planning into an archived project is usually not what the user meant.
 
 ### 4. Get acquainted with the project
 
-Read enough to plan with real context. Fan these out across concurrent sub-agents per [Sub-agents](#sub-agents) and plan from their summaries, keeping file contents out of the main thread.
+Fan these reads out across concurrent sub-agents per [Sub-agents](#sub-agents) and plan from their summaries, keeping file contents out of the main thread:
 
-What a Drupal project keeps where, and what each one tells a planner:
-
-- `README.md`, `*.info.yml` (`core_version_requirement`, `dependencies`, `package`), `composer.json` — what it claims to support, and what it depends on
-- `src/` — plugins under `src/Plugin/`, services declared in `*.services.yml`, forms, entities, event subscribers
-- `*.module`, `*.install`, `*.post_update.php` — hook implementations, and whether config changes ever shipped a `hook_update_N`
+- `README.md`, `*.info.yml` (`core_version_requirement`, `dependencies`, `package`), `composer.json` — claimed support and dependencies
+- `src/` — plugins under `src/Plugin/`, services in `*.services.yml`, forms, entities, event subscribers
+- `*.module`, `*.install`, `*.post_update.php` — hooks, and whether config changes shipped a `hook_update_N`
 - `config/install` and `config/schema` — unschemaed config keys are a common, well-scoped gap
-- `tests/src/Unit`, `tests/src/Kernel`, `tests/src/Functional`, `tests/src/FunctionalJavascript` — what is covered, and which critical path is not
-- `*.libraries.yml`, `js/`, `css/`, `templates/` — front-end surface, and anything an admin UI does by hand that Form API already does
-- `.gitlab-ci.yml` — which drupal.org CI template it includes, and which jobs it marks `allow_failure: true`
-- `phpcs.xml.dist`, `phpstan.neon.dist`, `cspell.json` — the standards the project has opted into, and the ones it has not
-- `git log --oneline -30` on the default branch, plus a shorter log on each other branch from `branches`, for where the work actually is
+- `tests/src/Unit`, `tests/src/Kernel`, `tests/src/Functional`, `tests/src/FunctionalJavascript` — coverage, and which critical path lacks it
+- `*.libraries.yml`, `js/`, `css/`, `templates/` — front-end surface, and admin UI hand-rolling what Form API does
+- `.gitlab-ci.yml` — which drupal.org CI template it includes, and which jobs are `allow_failure: true`
+- `phpcs.xml.dist`, `phpstan.neon.dist`, `cspell.json` — standards opted into, and not
+- `git log --oneline -30` on the default branch, plus a shorter log on each other branch from `branches`
 
-Three sources of real, well-scoped issues are specific to drupal.org and easy to miss:
+Three drupal.org-specific sources of well-scoped issues:
 
-- **Core compatibility.** `core_version_requirement` against the current and next Drupal major, plus use of anything `@deprecated`. A module that silently stops installing on the next major is the project's biggest risk, and it is visible from here.
-- **Forgiven CI jobs that are actually red.** Drupal.org's CI template marks jobs `allow_failure: true`, so the pipeline, the badge and `glab ci status` all report success while `phpcs`, `phpstan`, `cspell` or `eslint` sit red. Read the newest pipeline on the default branch, job by job rather than from the rollup, and each red-but-forgiven job is a candidate issue with its work already enumerated for it.
-- **Release hygiene.** `tags` against the default branch: a default branch a long way ahead of the newest tag means unreleased work, which is a plan item of its own.
+- **Core compatibility.** `core_version_requirement` against the current and next Drupal major, plus `@deprecated` usage. A module that stops installing on the next major is the biggest risk.
+- **Forgiven CI jobs that are red.** The CI template marks jobs `allow_failure: true`, so the pipeline, badge and `glab ci status` report success while `phpcs`, `phpstan`, `cspell` or `eslint` fail. Read the newest default-branch pipeline job by job; each red-but-forgiven job is a candidate issue with its work already enumerated.
+- **Release hygiene.** Compare `tags` with the default branch: far ahead of the newest tag means unreleased work, a plan item of its own.
 
 ### 5. Establish goals and current state
 
-Summarize for the user, in this shape:
+Summarize for the user:
 
 ```
 Project: <machine name and human title>
@@ -157,24 +153,24 @@ Status: <where it stands today. Supported branches and the newest release, activ
 
 ### 6. Build the plan
 
-Identify the work that moves the project toward its goals, then organize it into a plan, not a scattershot list. Aim for **3-10** issues drawn from these areas (skip any that don't apply):
+Identify work that moves the project toward its goals and organize it into a plan, not a scattershot list. Aim for **3-10** issues from these areas (skip any that don't apply):
 
-- **Bugs**: real defects spotted in code, edge cases, broken paths
+- **Bugs**: real defects, edge cases, broken paths
 - **Features**: gaps aligned with stated goals
-- **Core compatibility**: deprecated API use, the next Drupal major, dependency version ranges
-- **Refactor**: tech debt, duplication, dead code, brittle patterns that block future work
-- **Tests**: uncovered critical paths, and the test type Drupal expects for each (unit, kernel, functional)
-- **Docs**: missing README sections, the project page, contributor docs
-- **Tooling**: the CI jobs the pipeline forgives, `phpcs`/`phpstan` levels, release automation
+- **Core compatibility**: deprecated API use, the next Drupal major, dependency ranges
+- **Refactor**: tech debt, duplication, dead code, brittle patterns blocking future work
+- **Tests**: uncovered critical paths, with the test type Drupal expects (unit, kernel, functional)
+- **Docs**: README sections, the project page, contributor docs
+- **Tooling**: forgiven CI jobs, `phpcs`/`phpstan` levels, release automation
 - **Performance / Accessibility / Security**: when relevant
 
-Then turn that work into a plan:
+For each issue:
 
-- **Prioritize** each issue, justified by the goals and gaps from Step 5.
-- **Right-size** each issue so it's a single coherent unit of work, not an epic. Split anything too large.
-- **Target a branch** for each issue, from `branches` and `default_branch`. The default branch unless there is a reason, and name the reason when there is one.
+- **Prioritize** it, justified by Step 5's goals and gaps.
+- **Right-size** it to one coherent unit of work, not an epic. Split anything too large.
+- **Target a branch** from `branches` and `default_branch`: the default branch unless there is a reason, which you name.
 
-Draft each planned issue in this shape:
+Draft each in this shape:
 
 ```
 # <Title, under 70 chars>
@@ -192,7 +188,7 @@ Body: <what's wrong or missing, with file references>
 <how we'd know it's done>
 ```
 
-Check each candidate against `open_issues`, `recently_closed` and `open_merge_requests` from Step 3. When `capped` was true, search the queue per candidate as well, so a duplicate older than the sample still gets caught:
+Check each candidate against `open_issues`, `recently_closed` and `open_merge_requests` from Step 3. When `capped` was true, also search per candidate to catch duplicates outside the sample:
 
 ```bash
 glab api --hostname git.drupalcode.org \
@@ -204,17 +200,17 @@ Drop the candidate if any existing item:
 
 - addresses the same root cause or code location
 - has the same fix or goal, even under a different title
-- is already closed as fixed, or covered by an open merge request that would make it redundant
+- is closed as fixed, or covered by an open merge request that makes it redundant
 
-Only keep issues with **no existing overlap** — when in doubt, drop it rather than file a near-duplicate into somebody's queue.
+Keep only issues with **no existing overlap**; when in doubt, drop it.
 
 ### 7. Present the plan and file what is approved
 
-Present the plan as an ordered list, most return-on-investment first, then ask which issues to file. Do **not** file anything without explicit approval.
+Present the plan as an ordered list, highest return on investment first, and ask which issues to file. Do **not** file anything without explicit approval.
 
-Before filing, make each approved issue self-contained — nobody reading the queue in six months saw this planning session. Carry the grounding from Step 4 (paths, line references, commits, links), the reason from Step 5, and dependencies on issues filed earlier in this run by number (`Blocked by #3615838`). Facts from your own memory or notes go in only if they are fit for a public queue: no client or personal details, credentials or internal URLs.
+Make each approved issue self-contained: carry Step 4's grounding (paths, line references, commits, links), Step 5's reason, and dependencies on issues filed earlier in this run by number (`Blocked by #3615838`). Include facts from memory or notes only if fit for a public queue: no client or personal details, credentials or internal URLs.
 
-Write the body to a file rather than inlining it, because an issue description is markdown and the shell mangles backticks and newlines. Use drupal.org's own issue summary headings, which is what a reviewer there expects to find:
+Write the body to a file (the shell mangles markdown backticks and newlines), using drupal.org's issue summary headings:
 
 ```bash
 cat > <tmp>/planned-issue.md <<'EOF'
@@ -238,7 +234,7 @@ AI-Generated: Yes
 EOF
 ```
 
-Then file it. Issues are created in plan order, so a later one can reference the earlier ones it depends on by number:
+File in plan order, so later issues can reference earlier ones by number:
 
 ```bash
 glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>/issues" \
@@ -248,28 +244,28 @@ glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>
     jq -r '.web_url'
 ```
 
-Two things that look like omissions and are not:
+Deliberate omissions:
 
-- **`labels` carries only names from Step 3's `labels` list**, matched to the plan's category and priority — `category::bug`, `priority::normal`. A label the project has not defined is created by filing against it, which litters the queue with a near-duplicate of a label that already exists under another spelling. Omit the flag entirely rather than guess, and never set a `state::` label: triage is the maintainers' to do, and `loachbot-gitlab-issue` reads an issue carrying none as ready to pick up.
-- **No assignee.** On drupal.org a claim is a `/do:assign me` comment rather than a field, and an unclaimed issue is what the rest of the queue — and `loachbot-gitlab-issue` — reads as available. Filing an issue pre-assigned to yourself claims work you have not started.
+- **`labels` carries only names from Step 3's `labels` list**, matching the category and priority (`category::bug`, `priority::normal`). Filing against an undefined label creates it, littering the queue with a near-duplicate spelling. Omit the flag rather than guess, and never set a `state::` label: triage is the maintainers', and `loachbot-gitlab-issue` reads an issue with none as ready to pick up.
+- **No assignee.** On drupal.org a claim is a `/do:assign me` comment, and an unclaimed issue is what the queue and `loachbot-gitlab-issue` read as available. Pre-assigning claims work you have not started.
 
-When Step 3 reported `issue_queue: "drupal.org"`, there is nothing to POST to. Hand the approved issues to the user instead, each as a ready-to-paste summary, and point them at the form:
+When Step 3 reported `issue_queue: "drupal.org"`, there is nothing to POST to. Hand the approved issues to the user as ready-to-paste summaries and point them at the form:
 
 > `https://www.drupal.org/node/add/project-issue/<project>`
 
-Then report, in plan order: each filed issue's URL, or each drafted body for the user to file. Close with what is left for them — the triage only a maintainer can do (component, version, `state::accepted`), and that `loachbot-gitlab-issue` is what picks these up once they are in the queue. Leave every unapproved item unfiled, and do not list it as though it were pending.
+Then report, in plan order, each filed issue's URL or each drafted body. Close with what is left: maintainer triage (component, version, `state::accepted`), and that `loachbot-gitlab-issue` picks these up once queued. Leave unapproved items unfiled, and do not list them as pending.
 
 ## Rules
 
-- Planning writes nothing to drupal.org except the issues the user explicitly approved. No comments, no `/do:` commands, no labels on anything that already exists, no branches, no merge requests, no edits to the project's code.
-- Never file an issue the user did not explicitly approve, and never file one into a queue you could not check for duplicates without saying so first.
-- File issues unassigned and with no `state::` label. A claim on drupal.org is a comment, and triage belongs to the project's maintainers.
+- Write nothing to drupal.org except the issues the user explicitly approved: no comments, no `/do:` commands, no labels on existing items, no branches, no merge requests, no code edits.
+- Never file an issue the user did not explicitly approve, nor into a queue you could not check for duplicates without saying so first.
+- File issues unassigned and with no `state::` label. A claim is a comment, and triage belongs to the maintainers.
 - Only apply labels the project has already defined. Filing against an undefined label creates it.
-- Every filed issue carries `AI-Generated: Yes`. Drupal.org [requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) of AI-generated contributions, however short the issue, and a maintainer may decline one without it on that basis alone.
-- Every issue in the plan names the branch it lands on. A contrib project has several supported at once, and "the default branch" is an answer, not a default.
+- Every filed issue carries `AI-Generated: Yes`. Drupal.org [requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) of AI-generated contributions, and a maintainer may decline one without it.
+- Every issue names the branch it lands on; "the default branch" is an answer, not a default.
 <!-- SHARED: one-run-per-clone -->
-- One run per base clone at a time. Every LoachBot skill that clones shares `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org) with its siblings, and one run fetching, resetting or deleting branches under another corrupts both. Runs on different clones may overlap freely, and so may the sub-agents within a run.
+- One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- A plan is ordered and justified, not a pile of ideas — every issue carries a priority, a branch and a place in the sequence.
-- Prefer specificity over volume: five sharp, well-sequenced issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a red-but-forgiven CI job, a missing test) — no generic items like "add more tests".
-- Delegate the Step 4 gathering per [Sub-agents](#sub-agents), launching the independent reads together rather than in sequence; reserve the main thread for plan synthesis and the approve/file steps.
+- A plan is ordered and justified: every issue carries a priority, a branch and a place in the sequence.
+- Prefer specificity over volume: five sharp issues beat ten vague ones. Ground each in something concrete (a file path, a commit, a red-but-forgiven CI job, a missing test); no generic items like "add more tests".
+- Delegate Step 4 per [Sub-agents](#sub-agents), launching independent reads together; reserve the main thread for synthesis and approve/file steps.
