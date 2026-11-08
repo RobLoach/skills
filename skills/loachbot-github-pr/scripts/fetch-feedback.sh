@@ -32,8 +32,6 @@ OWNER=$1
 REPO=$2
 NUMBER=$3
 
-# Every read is taken in two steps: `gh` exits non-zero on a 404, and `set -e` would
-# hand its code back instead of 5.
 if ! AUTHOR=$(gh api user --jq '.login' 2>/dev/null) || [ -z "$AUTHOR" ]; then
     echo "cannot read the logged-in user" >&2
     exit 5
@@ -55,19 +53,20 @@ fi
 
 # <kind> <list endpoint> <reaction endpoint prefix>
 fetch_comments() {
-    local kind=$1 list=$2 prefix=$3 lines line id mine handled
+    local kind=$1 list=$2 prefix=$3 lines id rockets json mine handled
+    # Tab-separated id and 🚀 count ahead of the JSON, so each line costs one jq call.
     if ! lines=$(gh api --paginate "$list" \
-        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, path, body, rockets: .reactions.rocket}' \
+        --jq '.[] | select(.user.login == env.AUTHOR)
+              | "\(.id)\t\(.reactions.rocket // 0)\t\({id, created_at, html_url, path, body} | tojson)"' \
         2>/dev/null); then
         echo "cannot read $list" >&2
         exit 5
     fi
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
+    while IFS=$'\t' read -r id rockets json; do
+        [ -n "$id" ] || continue
         handled=false
         # Only comments with a 🚀 at all cost an extra read.
-        if [ "$(jq '.rockets' <<<"$line")" -gt 0 ]; then
-            id=$(jq '.id' <<<"$line")
+        if [ "$rockets" -gt 0 ]; then
             if ! mine=$(gh api --paginate "$prefix/$id/reactions?content=rocket" \
                 --jq '.[] | select(.user.login == env.AUTHOR) | .id' 2>/dev/null); then
                 echo "cannot read the reactions of $prefix/$id" >&2
@@ -76,7 +75,7 @@ fetch_comments() {
             [ -z "$mine" ] || handled=true
         fi
         jq -c --arg kind "$kind" --argjson handled "$handled" \
-            '{kind: $kind} + (del(.rockets) | with_entries(select(.value != null))) + {handled: $handled}' <<<"$line"
+            '{kind: $kind} + with_entries(select(.value != null)) + {handled: $handled}' <<<"$json"
     done <<<"$lines"
 }
 

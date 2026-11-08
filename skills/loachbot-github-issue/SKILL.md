@@ -54,6 +54,23 @@ When the user asks for several runs ("five times", "until there aren't any left"
 4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
 <!-- /SHARED: repeated-runs -->
 
+<!-- SHARED: parking -->
+## Parking
+
+To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. Issues and Pull Requests share these endpoints:
+
+```bash
+gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question>"
+gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<original title> (Needs Info)"
+```
+
+Once `check-parked.sh` reports an answer, strip the suffix before working on the item:
+
+```bash
+gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<title without ' (Needs Info)'>"
+```
+<!-- /SHARED: parking -->
+
 ## Workflow
 
 ### 1. Find one actionable issue
@@ -75,7 +92,7 @@ gh search issues --author=@me --assignee=@me --state=open --sort=updated --limit
 
 If none are found, report "Nothing to do" and stop.
 
-Walk the issues newest first. A title without ` (Needs Info)` is actionable. One with it was parked by an earlier run (Step 4); check for answers:
+Walk the issues newest first. A title without ` (Needs Info)` is actionable. One with it was [parked](#parking); check for answers:
 
 ```bash
 bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number>
@@ -95,11 +112,7 @@ gh api "repos/<owner>/<repo>/issues/<number>" --jq '{state, assignees: [.assigne
 
 If it is not `open` or you are not an assignee, try the next candidate.
 
-If the pick was parked, strip the suffix first:
-
-```bash
-gh issue edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
-```
+If the pick was parked, strip the suffix ([Parking](#parking)).
 
 Report the pick to the user immediately:
 > Working on: https://github.com/<owner>/<repo>/issues/<number>
@@ -121,19 +134,13 @@ Investigate through parallel sub-agents, keeping file contents out of the main t
 
 ### 3. Do the work
 
-Each issue gets its own worktree at `~/Projects/<owner>/<repo>.worktrees/issue-<number>` on branch `fix/issue-<number>`, the same across runs whatever the title. The base clone `~/Projects/<owner>/<repo>` stays on the default branch.
-
 ```bash
-set -o pipefail
-WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
+WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> issue <number>)
 cd "$WT"
 ```
 
-The script clones if needed, recreates the worktree, resumes a pushed `origin/fix/issue-<number>`, rebases onto the default branch and syncs submodules. On failure:
-
-- **4** — another live worktree has the branch. Run `git worktree remove <stale-path> --force` and `git worktree prune`, then rerun the script.
-- **3** — the rebase conflicted and was aborted. Park it as in Step 4 and stop; never work in a half-rebased worktree.
-- **9** — a submodule could not be fetched (stderr names it); the worktree is still usable. If the fix does not touch that submodule, continue without it. Otherwise park it as in Step 4, naming the submodule, and stop.
+- **3** — the rebase conflicted and was aborted. [Park](#parking) it; never work in a half-rebased worktree.
+- **9** — a submodule could not be fetched (stderr names it); the worktree is still usable. If the fix does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
 - Any other non-zero — stderr names the failing command. Report it and stop; do not force through.
 
 Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then review `git status --short` and stage only the files the fix meant to change: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them.
@@ -143,11 +150,11 @@ git add <paths>
 if git diff --cached --quiet; then
     echo "nothing staged: no code change was needed"
 else
-    git commit -m "<concise message>"
+    git commit -m "<one-line message>"
 fi
 ```
 
-If nothing was staged (already fixed, or a question rather than a defect), open no Pull Request. Park it as in Step 4, with a comment saying what you found, and stop so a human decides whether to close it.
+If nothing was staged (already fixed, or a question rather than a defect), open no Pull Request. [Park](#parking) it with a comment saying what you found, so a human decides whether to close it.
 
 Push and make sure a PR exists:
 
@@ -166,7 +173,7 @@ if [ -z "$PR_NUMBER" ]; then
 fi
 ```
 
-If the push fails for lack of access, park it as in Step 4 and stop; it is a permissions problem for a human, not a reason to fork.
+If the push fails for lack of access, [park](#parking) it; it is a permissions problem for a human, not a reason to fork.
 
 Verify CI (the script waits up to about 30 minutes):
 
@@ -175,20 +182,12 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUM
 ```
 
 - **0** → passed, or no CI. Continue.
-- **8** → still pending. Report the pending checks and PR URL, then stop without un-assigning; a later run picks it up.
-- **7** → status unreadable; unknown is not passing. Report it and the PR URL, then stop without un-assigning.
-- **1** → a check failed. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, park it as in Step 4 and stop.
+- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning; a later run picks it up.
+- **1** → a check failed. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, [park](#parking) it.
 
 ### 4. When the task is unclear
 
-Post a short question as a comment, then append ` (Needs Info)` to the title and stop. Do **not** un-assign.
-
-Comment first, rename second: Step 1 treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop.
-
-```bash
-gh issue comment <number> --repo <owner>/<repo> --body "<one short question>"
-gh issue edit <number> --repo <owner>/<repo> --title "<original title> (Needs Info)"
-```
+[Park](#parking) it.
 
 ### 5. Un-assign when done
 
@@ -206,10 +205,9 @@ Report the PR to the user:
 
 ## Rules
 
-- One issue per run; for more, see [Repeated runs](#repeated-runs). Within a run, the main thread keeps the git, PR and un-assign steps.
-- Never comment except to ask for clarification (Step 4).
-- Run all git operations for an issue inside its worktree; never check out, branch or commit in the base clone.
+- One issue per run; for more, see [Repeated runs](#repeated-runs).
+- Never comment except to ask for clarification ([Parking](#parking)).
+- Run all git operations for an issue inside its worktree; never `git checkout` or commit in the base clone, which stays on the default branch.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- Keep commit messages to one concise line, following your global commit conventions.

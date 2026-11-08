@@ -24,8 +24,8 @@
 #      log lines, or nothing fails at all. Report the pre-existing ones; fix nothing.
 #   1  Something is new: a job that passes on the target branch, or extra `+` lines in
 #      one that fails on both. Printed under "new:".
-#   6  The target branch has no finished pipeline to compare against. Treat every
-#      failure as this branch's.
+#   6  The target branch has no finished pipeline to compare against, so every failure
+#      is listed under "new:" as this branch's.
 #   7  The merge request or its pipeline jobs could not be read.
 
 set -euo pipefail
@@ -75,19 +75,26 @@ if [ -z "$MR_PIPELINE" ] || [ -z "$MR_PROJECT" ]; then
     exit 7
 fi
 
+if ! MR_FAILING=$(failing_jobs "$MR_PROJECT" "$MR_PIPELINE"); then
+    echo "cannot read the jobs of pipeline $MR_PIPELINE in project $MR_PROJECT" >&2
+    exit 7
+fi
+if [ -z "$MR_FAILING" ]; then
+    echo "nothing is failing"
+    exit 0
+fi
+
 # Newest finished pipeline that actually ran: canceled and skipped ones say nothing.
 TARGET_PIPELINE=$(api "projects/$NAMESPACE%2F$PROJECT/pipelines?ref=$TARGET&scope=finished&per_page=20" \
     2>/dev/null | jq -r '[.[] | select(.status == "success" or .status == "failed")][0].id // empty') ||
     TARGET_PIPELINE=
 if [ -z "$TARGET_PIPELINE" ]; then
-    echo "no finished pipeline on $TARGET in $NAMESPACE/$PROJECT to compare against" >&2
+    echo "no finished pipeline on $TARGET in $NAMESPACE/$PROJECT to compare against"
+    printf '\nnew:\n'
+    printf '%s\n' "$MR_FAILING" | awk -F'\t' '{print "  " $1 " job=" $2}'
     exit 6
 fi
 
-if ! MR_FAILING=$(failing_jobs "$MR_PROJECT" "$MR_PIPELINE"); then
-    echo "cannot read the jobs of pipeline $MR_PIPELINE in project $MR_PROJECT" >&2
-    exit 7
-fi
 if ! TARGET_FAILING=$(failing_jobs "$NAMESPACE%2F$PROJECT" "$TARGET_PIPELINE"); then
     echo "cannot read the jobs of pipeline $TARGET_PIPELINE on $TARGET" >&2
     exit 7
@@ -122,5 +129,4 @@ if [ -n "$NEW" ]; then
     printf '\nnew:\n%s' "$NEW"
     exit 1
 fi
-[ -n "$OLD" ] || echo "nothing is failing"
 exit 0

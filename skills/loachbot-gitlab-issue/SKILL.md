@@ -8,22 +8,27 @@ metadata:
 ---
 # LoachBot GitLab Issue Fixer
 
+<!-- SHARED: gitlab-prerequisites -->
 ## Prerequisites
 
 - `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
 - `jq` on `PATH`; the scripts parse JSON with it.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+<!-- /SHARED: gitlab-prerequisites -->
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` is optional: it only makes a named issue from a queue that never moved to GitLab (Drupal core among them) report as the wrong kind of project rather than unreadable. This skill cannot work on those either way.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab. Issue forks are always under `issue/`.
+- Issue forks are always under `issue/`.
 - SSH access to `git.drupal.org`, for pushes to issue forks.
 - Clones and worktrees go in `~/Projects` (created if missing); `LOACHBOT_PROJECTS_DIR` overrides it.
 
+<!-- SHARED: gitlab-conventions -->
 ## Conventions
 
-`bash` blocks are templates: substitute `<project>` (a machine name like `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE`) and `<issue-iid>`, and adapt to the issue.
+`bash` blocks are templates: substitute `<project>` (a machine name like `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE`) and the other `<placeholders>`, and adapt to the case at hand.
 
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
 `<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+<!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
@@ -103,11 +108,11 @@ bash <this skill's directory>/scripts/find-issues.sh [<project>]
 
 Act on its exit code:
 
-- **0** → candidates printed as kind, reference, merge request count, labels and title (kinds and state allowlist in the script's header).
+- **0** → candidates printed (kinds and state allowlist in the script's header).
 - **6** → report "Nothing to do" and stop.
 - **5** → the search could not be read. Report it and stop.
 
-Take a `resume` before a `ready`: an earlier run claimed it but stopped before opening a merge request, and nothing else will finish it. It is already claimed, so **skip Step 2**.
+A `resume` is an earlier run's claim with no merge request yet: **skip Step 2** for it.
 
 A `parked` issue has an unanswered Step 8 question. Check for replies:
 
@@ -194,28 +199,26 @@ bash <this skill's directory>/scripts/ensure-fork.sh <project> <issue-iid> > <tm
 jq -r '"\(.fork_path) id=\(.fork_id) created=\(.created) access_via=\(.access_via)"' <tmp>/fork.json
 ```
 
-It creates the fork with `/do:fork` if missing, and requests push access if you lack it (a `:heavy_plus_sign:` reaction on drupalbot's fork note, then `/do:access`). Act on its exit code:
+Act on its exit code:
 
 - **0** → fork exists and is writable. Continue.
-- **6** or **7** → drupalbot never acted. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
+- **6** → drupalbot never acted. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
 - **5** → the project or the issue could not be read. Report it and stop.
 
 Then take a worktree at `~/Projects/drupalcode/<project>.worktrees/issue-<issue-iid>`:
 
 ```bash
-set -o pipefail
-WT=$(bash <this skill's directory>/scripts/setup-issue-worktree.sh <project> <issue-iid> | tail -1)
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> issue <issue-iid>)
 cd "$WT"
 ```
 
-It adds `upstream` beside any `origin`, unshallows a shallow clone, and prints `fork_branch=`, `target_branch=` and `resumed=` on stderr for Step 6. Act on its exit code:
+Its stderr ends with `fork_branch=`, `target_branch=` and `resumed=` for Step 6. Act on its exit code:
 
-- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; a conflict in logic you did not write is a Step 8 park. Never work in a half-rebased worktree.
+- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify. Never work in a half-rebased worktree.
 - **4** — another live worktree has the branch. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and rerun.
-- **5** — the project or its fork could not be read. Report it and stop.
-- Any other non-zero — the script names the failing command on stderr. Report it; do not force through it.
+- Any other non-zero — stderr names what failed. Report it and stop; do not force through it.
 
-`resumed=true` means work already exists: read it (`git log upstream/<target-branch>..HEAD`) and build on it, never reverting or rewriting it.
+`resumed=true` means work already exists: read it (`git log upstream/<target-branch>..HEAD`) and build on it.
 
 ### 5. Do the work
 
@@ -236,15 +239,11 @@ Keep the diff to what the issue asked; mention broader cleanups to the user inst
 
 ### 6. Open the merge request
 
-Push to the **fork**, never to the project:
-
 ```bash
 git push --force-with-lease -u fork "HEAD:<fork-branch>"
 ```
 
-`--force-with-lease` refuses if another contributor moved the branch. Never plain `--force`: issue forks are shared.
-
-Write the description to a file (the shell mangles markdown), with exactly three parts:
+Write the description to a file (the shell mangles markdown):
 
 ```bash
 cat > <tmp>/mr-description.md <<'EOF'
@@ -290,25 +289,16 @@ Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter l
 Act on its exit code:
 
 - **0** → every job passed, or no CI. Continue.
-- **1** → jobs failed, forgiven ones marked `(allow_failure)`. Sort them, below.
+- **1** → `new:` lists what this branch introduced, forgiven or not. **Fix all of it.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them in the handback instead of "The pipeline is green."
 - **7** → pipeline unreadable. Unknown is not passing: report it with the merge request URL and stop.
 - **8** → still running when the ~9-minute call ended. Run it again; after three runs, report pending jobs and the URL and stop without handing back.
 
+The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
+
 After **7** or **8**, tell the user a `loachbot-gitlab-mr` run finishes it once CI settles (Step 1 now skips it).
 
-On **1**, split this branch's failures from the target branch's own:
-
-```bash
-bash <this skill's directory>/scripts/compare-to-target.sh <project> "$MR_IID"
-```
-
-- **1** or **6** → `new:` lists what this branch introduced (on **6**, with no target pipeline to compare, everything is). **Fix all of it.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8. `+` lines are a log diff with numbers masked: a lead, not a verdict.
-- **0** → every failure also fails on the target branch. Fix nothing; name them in the handback instead of "The pipeline is green."
-- **7** → as the wait's **7**.
-
-Never work around a pre-existing failure (skipped tests, baseline entries, `allow_failure` edits): report it instead.
-
-Read a failing job's log from the pipeline project the scripts print (it may be the parent, not the fork):
+Read a failing job's log from the pipeline project the wait prints (it may be the parent, not the fork):
 
 ```bash
 bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>

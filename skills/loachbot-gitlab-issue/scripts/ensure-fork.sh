@@ -24,29 +24,21 @@
 # make a mess that a human has to look at, so a 404 is confirmed by a second read before
 # anything is written. One dropped connection should not produce a comment.
 #
-# Push access is asked for twice over, cheapest first. The note drupalbot leaves when it
-# creates a fork ends "React to this message with :heavy_plus_sign: to gain access", and
-# a reaction is the better way to ask: it leaves no second comment in a thread humans
-# have to read. /do:access is the documented command and stays as the fallback, so a
-# project where the reaction is not wired up still works.
-#
 # Emits one JSON object:
 #   {
 #     "fork_path":    "issue/<project>-<issue-iid>",
 #     "fork_id":      number,
 #     "fork_ssh_url": the git.drupal.org URL to push to,
 #     "created":      true when this run asked drupalbot to create the fork,
-#     "access_via":   "existing" when you could already push, "reaction" when the
-#                     heavy_plus_sign reaction earned it, "comment" when /do:access did
+#     "access_via":   "existing" when you could already push, "comment" when /do:access
+#                     earned it
 #   }
 #
 # Exit codes:
 #   0  The fork exists and you have push access. JSON on stdout.
 #   5  The project or its issue could not be read; nothing was posted.
-#   6  /do:fork was posted but no fork appeared within the wait. Report it with the
-#      issue URL - the comment is public, so do not post it again.
-#   7  The fork exists, both ways of asking for access were tried, and none arrived
-#      within the wait. Same handling: report it rather than asking again.
+#   6  /do:fork or /do:access was posted but drupalbot did not act within the wait.
+#      Report it with the issue URL - the comment is public, so do not post it again.
 
 set -euo pipefail
 
@@ -68,9 +60,6 @@ FORK_ENC="issue%2F$PROJECT-$IID"
 
 POLL_SECONDS=${LOACHBOT_FORK_POLL:-5}
 MAX_POLLS=${LOACHBOT_FORK_MAX_POLLS:-24}
-# The reaction gets a shorter wait than the command: it costs nothing to give up on and
-# fall through to /do:access, whereas giving up on /do:access ends the run.
-REACTION_POLLS=${LOACHBOT_FORK_REACTION_POLLS:-6}
 # GitLab's Developer role. Below this a branch cannot be pushed, so it is the real
 # question rather than mere membership.
 MIN_ACCESS=30
@@ -142,7 +131,7 @@ my_access() {
 }
 
 wait_for_access() {
-    for _ in $(seq 1 "$1"); do
+    for _ in $(seq 1 "$MAX_POLLS"); do
         sleep "$POLL_SECONDS"
         ACCESS=$(my_access)
         [ "$ACCESS" -ge "$MIN_ACCESS" ] && return 0
@@ -154,48 +143,15 @@ ACCESS_VIA=existing
 ACCESS=$(my_access)
 
 if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
-    echo "no push access to $FORK_PATH (access level $ACCESS)" >&2
-
-    # The newest fork-created note is the one to react to: an issue whose fork was
-    # deleted and remade has more than one, and only the last describes the fork that
-    # exists now.
-    NOTES=''
-    NOTES=$(api --paginate \
-        "projects/$NAMESPACE%2F$PROJECT/issues/$IID/notes?sort=asc&order_by=created_at" \
-        2>/dev/null) || NOTES=''
-    NOTE_ID=$(printf '%s' "${NOTES:-null}" | jq -r '
-        if type == "array" then
-            (map(select(.author.username == "drupalbot"
-                        and (.body | contains("Fork created"))))
-             | last | .id // empty)
-        else empty end
-    ')
-
-    if [ -n "$NOTE_ID" ]; then
-        echo "reacting :heavy_plus_sign: to drupalbot note $NOTE_ID" >&2
-        # An award this user already left comes back as "404 ... has already been taken",
-        # which means the asking is done rather than that it failed.
-        api -X POST \
-            "projects/$NAMESPACE%2F$PROJECT/issues/$IID/notes/$NOTE_ID/award_emoji" \
-            -f "name=heavy_plus_sign" >/dev/null 2>&1 || true
-        if wait_for_access "$REACTION_POLLS"; then
-            ACCESS_VIA=reaction
-        fi
-    else
-        echo "no fork-created note to react to; going straight to /do:access" >&2
-    fi
-fi
-
-if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
-    echo "asking drupalbot with /do:access" >&2
+    echo "no push access to $FORK_PATH (access level $ACCESS); asking drupalbot with /do:access" >&2
     glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:access" >&2
-    wait_for_access "$MAX_POLLS" || true
+    wait_for_access || true
     ACCESS_VIA=comment
 fi
 
 if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
     echo "push access to $FORK_PATH never arrived (access level $ACCESS)" >&2
-    exit 7
+    exit 6
 fi
 
 jq -nc \

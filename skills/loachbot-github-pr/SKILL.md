@@ -54,6 +54,23 @@ When the user asks for several runs ("five times", "until there aren't any left"
 4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
 <!-- /SHARED: repeated-runs -->
 
+<!-- SHARED: parking -->
+## Parking
+
+To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. Issues and Pull Requests share these endpoints:
+
+```bash
+gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question>"
+gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<original title> (Needs Info)"
+```
+
+Once `check-parked.sh` reports an answer, strip the suffix before working on the item:
+
+```bash
+gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<title without ' (Needs Info)'>"
+```
+<!-- /SHARED: parking -->
+
 ## Workflow
 
 ### 1. Find a Pull Request
@@ -75,7 +92,7 @@ gh search prs --draft --author=@me --assignee=@me --state=open --sort=updated --
 
 If none are found, report "Nothing to do" and stop.
 
-Going most-recently-updated first, a PR is actionable unless its title ends with ` (Needs Info)`, meaning an earlier run parked it (Step 4). For those, check for answers:
+Going most-recently-updated first, a PR is actionable unless its title ends with ` (Needs Info)`, meaning an earlier run [parked](#parking) it. For those, check for answers:
 
 ```bash
 bash <this skill's directory>/scripts/check-parked.sh <owner> <repo> <number> pr
@@ -91,29 +108,20 @@ Pick the first actionable PR; if none, report "Nothing to do" and stop. Search r
 gh pr view <number> --repo <owner>/<repo> --json state,isDraft
 ```
 
-Proceed only if `state` is `OPEN` and `isDraft` is `true`; otherwise try the next candidate. If it was parked, strip the suffix first:
-
-```bash
-gh pr edit <number> --repo <owner>/<repo> --title "<original title without ' (Needs Info)'>"
-```
+Proceed only if `state` is `OPEN` and `isDraft` is `true`; otherwise try the next candidate. If it was parked, strip the suffix ([Parking](#parking)).
 
 Report the URL immediately:
 > Working on: https://github.com/<owner>/<repo>/pull/<number>
 
 ### 2. Check out the pull request in a dedicated worktree
 
-The base clone `~/Projects/<owner>/<repo>` stays on the default branch; each PR gets a worktree at `~/Projects/<owner>/<repo>.worktrees/pr-<number>`, deleted when the run ends.
-
 ```bash
-set -o pipefail
-WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
+WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> pr <number>)
 cd "$WT"
 ```
 
-The script clones on first use, discards leftovers from an interrupted run, checks out the PR head with `gh pr checkout` (resolving fork remotes), and syncs submodules.
-
-- **4** → the PR branch is checked out by another live worktree. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and rerun; never force-switch branches across worktrees.
-- **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the requested changes do not touch that submodule, continue without it. Otherwise park the PR as in Step 4, naming the submodule, and stop.
+- **4** → another worktree (named on stderr) has the PR branch checked out, possibly the user's own. Report it and stop; never remove it or force-switch branches across worktrees.
+- **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the requested changes do not touch that submodule, continue without it. Otherwise [park](#parking) the PR, naming the submodule.
 - Any other non-zero → checkout failed (e.g. the local branch diverged). Stop and report; do not force through.
 
 ### 3. Understand the Pull Request
@@ -137,7 +145,7 @@ If there is nothing to address (no un-🚀'd comment, and no review summary newe
 
 ### 4. Do the work
 
-Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; independent comments run concurrently. The main thread keeps git, reactions and ready.
+Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; independent comments run concurrently.
 
 Test where possible, then review `git status --short` and stage only the files the change meant to touch: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them. Commit and push (the branch tracks the PR head):
 
@@ -145,7 +153,7 @@ Test where possible, then review `git status --short` and stage only the files t
 git add <paths>
 # Skip the empty commit when no code changed.
 if ! git diff --cached --quiet; then
-    git commit -m "<concise message>"
+    git commit -m "<one-line message>"
     git push
 fi
 ```
@@ -166,27 +174,21 @@ gh api "repos/<owner>/<repo>/pulls/comments/<comment_id>/reactions" \
     --method POST --field content="rocket"
 ```
 
-Leave comments needing human judgment or a design decision unreacted and move on. If **all** need it, park the PR: post one short question naming what you need, then append ` (Needs Info)` to the title, report to the user and stop without marking ready. Comment first, rename second: Step 1 treats anything after the rename as the reply, so renaming first would un-park it on your own question forever.
-
-```bash
-gh pr comment <number> --repo <owner>/<repo> --body "<one short question>"
-gh pr edit <number> --repo <owner>/<repo> --title "<original title> (Needs Info)"
-```
+Leave comments needing human judgment or a design decision unreacted and move on. If **all** need it, [park](#parking) the PR and report to the user.
 
 If the work deviates from the PR title or body, update them to match.
 
 ### 5. Verify CI before marking ready
 
-The script waits for checks to register, probes repeatedly before concluding there is no CI, and caps the wait at about 30 minutes:
+Waits up to about 30 minutes:
 
 ```bash
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 ```
 
 - **0** → passed, or no CI. Continue to Step 6.
-- **8** → still pending. Report the pending checks and PR URL, then stop without marking ready; a later run picks it up.
-- **7** → status unreadable. Unknown is not passing: report it and the PR URL, then stop without marking ready.
-- **1** → a check failed. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, park the PR as in Step 4 (comment naming the failing checks, then rename) and stop.
+- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without marking ready; a later run picks it up.
+- **1** → a check failed. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, [park](#parking) the PR, naming the failing checks.
 
 ### 6. Mark the Pull Request as ready
 
@@ -205,10 +207,9 @@ List the `html_url` of any comment left unreacted (Step 4) under the Done line; 
 
 ## Rules
 
-- One Pull Request per run; for more, see [Repeated runs](#repeated-runs). Within a run, the main thread keeps orchestration, git, reactions and ready.
-- Never post comments except the single parking question (Steps 4 and 5) and a reply linking a PR opened in another repository (Step 4); otherwise only react and rename.
-- Run all git operations for a PR inside its worktree; never `git checkout`, `gh pr checkout` or commit in the base clone.
+- One Pull Request per run; for more, see [Repeated runs](#repeated-runs).
+- Never post comments except the single [parking](#parking) question and a reply linking a PR opened in another repository (Step 4); otherwise only react and rename.
+- Run all git operations for a PR inside its worktree; never `git checkout`, `gh pr checkout` or commit in the base clone, which stays on the default branch.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- Keep commit messages to one concise line, per your global commit conventions.

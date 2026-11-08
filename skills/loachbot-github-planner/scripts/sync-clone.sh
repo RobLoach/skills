@@ -45,8 +45,8 @@ fi
 cd "$BASE"
 
 if [ -n "$(git status --porcelain)" ]; then
-    echo "clone has uncommitted local changes:" >&2
-    git status --short >&2
+    echo "clone has uncommitted local changes:"
+    git status --short
     exit 5
 fi
 
@@ -58,14 +58,9 @@ git fetch origin --prune
 # origin/<default> does not already have stops the run.
 AHEAD=$(git rev-list --count "origin/$DEFAULT..HEAD")
 if [ "$AHEAD" -ne 0 ]; then
-    echo "clone has $AHEAD commit(s) that origin/$DEFAULT does not:" >&2
-    git log --oneline "origin/$DEFAULT..HEAD" >&2
+    echo "clone has $AHEAD commit(s) that origin/$DEFAULT does not:"
+    git log --oneline "origin/$DEFAULT..HEAD"
     exit 5
-fi
-
-CURRENT=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT" != "$DEFAULT" ]; then
-    echo "note: moving this clone from '$CURRENT' to '$DEFAULT'" >&2
 fi
 
 git checkout "$DEFAULT"

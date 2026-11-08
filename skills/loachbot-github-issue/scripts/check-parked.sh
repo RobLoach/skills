@@ -7,17 +7,6 @@
 #
 # Usage: bash scripts/check-parked.sh <owner> <repo> <number> [pr]
 #
-# Two sibling scripts answer this same question elsewhere, and none of the three can
-# share this file - one speaks `gh`, the others `glab` - so nothing in CI catches them
-# drifting apart:
-#   * loachbot-gitlab-mr/scripts/check-parked-mr.sh parks by renaming too, with the same
-#     comment-then-rename invariant and the same 0/5/6 contract. Change the parking logic
-#     in one and change it there.
-#   * loachbot-gitlab-issue/scripts/check-parked-issue.sh keeps the 0/5/6 contract but
-#     parks with a `state::blocked` label rather than a rename, because an issue in
-#     somebody else's queue is not a title to rewrite. That difference is deliberate: it
-#     is not a copy of this logic and must not be synced to it.
-#
 # A parking run comments first and renames second, so the parking rename is the
 # newest event it leaves behind. The most recent one wins: an item can be parked,
 # answered and re-parked any number of times. A reply is anything posted after that
@@ -42,12 +31,6 @@ REPO=$2
 NUMBER=$3
 KIND=${4:-issue}
 
-# Every read here is taken in two steps. `gh` exits non-zero on a 404, and under
-# `set -e -o pipefail` that ends the run before it can say which read failed - so an
-# unreadable item would hand back `gh`'s own exit code, which means nothing to the
-# caller. None of them may fall back to "found nothing" either: a failed comments read
-# treated as "no replies" would report an answered item as unanswered and skip it on
-# every future run.
 RENAMES=''
 if ! RENAMES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/events" \
     --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' \

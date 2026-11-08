@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
 # Confirm drupalbot acted on a handback comment: you are no longer assigned, and the
-# issue carries the state label the comment asked for.
+# issue carries `state::needsReview`.
 #
-# Usage: bash scripts/confirm-handback.sh <project> <issue-iid> [state-label]
-#
-# [state-label] defaults to `state::needsReview`.
+# Usage: bash scripts/confirm-handback.sh <project> <issue-iid>
 #
 # /do: commands are queued rather than answered, so the comment lands at once and the
 # assignment and label follow a few seconds later - or do not. This polls instead of
@@ -19,8 +17,8 @@
 
 set -euo pipefail
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-    echo "usage: bash scripts/confirm-handback.sh <project> <issue-iid> [state-label]" >&2
+if [ "$#" -ne 2 ]; then
+    echo "usage: bash scripts/confirm-handback.sh <project> <issue-iid>" >&2
     exit 64
 fi
 
@@ -29,8 +27,9 @@ HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
-LABEL=${3:-state::needsReview}
+LABEL=state::needsReview
 
+# The claim's knobs on purpose: both wait on the same drupalbot queue.
 POLL_SECONDS=${LOACHBOT_CLAIM_POLL:-5}
 MAX_POLLS=${LOACHBOT_CLAIM_MAX_POLLS:-24}
 

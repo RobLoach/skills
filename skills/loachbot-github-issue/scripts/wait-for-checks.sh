@@ -41,10 +41,8 @@
 # Exit codes:
 #   0  Checks passed, or the repository has no CI at all. Soft-failed steps, if any, are
 #      listed first - passing here means the rollup is green, not that nothing failed.
-#   8  Still pending after the full wait. Leave the item alone; a later run will see
-#      the settled result.
-#   7  The check status could not be read at all (API failure, unexpected output).
-#      Unknown is not the same as passing: report it and stop.
+#   8  Unsettled: still pending after the full wait, or the status could not be read at
+#      all (API failure, unexpected output); stderr says which. Unknown is not passing.
 #   1  At least one check failed.
 
 set -uo pipefail
@@ -78,7 +76,7 @@ for PROBE in $(seq "$EMPTY_PROBES"); do
         --json statusCheckRollup --jq '.statusCheckRollup | length' 2>"$ERR"); then
         cat "$ERR" >&2
         echo "could not read the status check rollup; not treating that as passing" >&2
-        exit 7
+        exit 8
     fi
 
     # An empty or non-numeric rollup means the query silently returned nothing useful.
@@ -87,7 +85,7 @@ for PROBE in $(seq "$EMPTY_PROBES"); do
     case "$ROLLUP" in
         '' | *[!0-9]*)
             echo "unexpected status check rollup: '$ROLLUP'" >&2
-            exit 7
+            exit 8
             ;;
     esac
 
@@ -117,6 +115,7 @@ for _ in $(seq "$ATTEMPTS"); do
     [ "$STATUS" -eq 8 ] || break
     sleep "$INTERVAL"
 done
+[ "$STATUS" -ne 8 ] || echo "checks still pending after the full wait" >&2
 
 # Steps that failed inside a job that still succeeded: `continue-on-error` swallowed
 # them. Only worth looking up once the rollup has settled, and never fatal on its own.

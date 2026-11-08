@@ -9,16 +9,20 @@ metadata:
 
 # LoachBot GitHub Planner
 
+<!-- SHARED: prerequisites -->
 ## Prerequisites
 
-- `gh` is authenticated: run `gh auth status`; if it fails, report that and stop.
-- Clones go in `~/Projects` (created if missing); `LOACHBOT_PROJECTS_DIR` overrides it.
+- Run `gh auth status` first; if it fails, report that and stop.
+- Clones and worktrees go in `~/Projects` (created if missing), or in `LOACHBOT_PROJECTS_DIR` if the user prefers another directory.
+<!-- /SHARED: prerequisites -->
 
+<!-- SHARED: conventions -->
 ## Conventions
 
-`bash` blocks are templates: substitute `<owner>` and `<repo>`, and adapt anything that doesn't fit the repository.
+The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
-Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`. Each script's header documents its arguments and exit codes.
+Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
+<!-- /SHARED: conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
@@ -151,7 +155,7 @@ Present the plan ordered by return on investment. Number every list shown to the
 
 Do **not** act on any item without explicit approval. Close a triaged issue only when approved, with a comment saying why (`gh issue close <number> --repo <owner>/<repo> --comment "<why>"`).
 
-To fix or open PRs, work per item in a worktree off the default branch, never in the base clone: `git -C "$CLONE" worktree add -b plan-<id> "$CLONE.worktrees/plan-<id>" origin/<default-branch>`, removed once the item is done. Then: one commit each, a test that fails without the fix where practical, the project's checks passing, push (to the default branch, or a branch plus `gh pr create`), CI watched to green, then report the commit or PR URL. Unchosen candidates can still be filed as issues if the user asks.
+To fix or open PRs, give each item its own worktree off the default branch (`git -C "$CLONE" worktree add -b plan-<id> "$CLONE.worktrees/plan-<id>" origin/<default-branch>`), removed once done. Make one commit each, pass the project's checks, push (to the default branch, or a branch plus `gh pr create`), wait for CI green, and report the commit or PR URL.
 
 #### Filing issues
 
@@ -173,7 +177,5 @@ Report each created issue URL in plan order. Leave the rest unfiled.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- Never file issues the user did not explicitly approve.
 - A plan is ordered and justified, not a pile of ideas: every issue has a priority and a place in the sequence.
 - Prefer five sharp issues over ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test); no generic items like "add more tests."
-- Delegate step-3 gathering per [Sub-agents](#sub-agents), launching independent reads together; keep the main thread for synthesis, approval and filing.

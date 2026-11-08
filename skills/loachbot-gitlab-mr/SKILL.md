@@ -8,22 +8,26 @@ metadata:
 ---
 # LoachBot GitLab Merge Request Fixer
 
+<!-- SHARED: gitlab-prerequisites -->
 ## Prerequisites
 
-- `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
-- `jq` is on `PATH`; the scripts parse `glab api` JSON with it.
-- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab, Drupal core among them. Reads need no authentication. Without it, the issue behind those merge requests cannot be read.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab.
+- `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
+- `jq` on `PATH`; the scripts parse JSON with it.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+<!-- /SHARED: gitlab-prerequisites -->
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` for projects whose issues never moved to GitLab, Drupal core among them; reads need no login. Without it, the issue behind those merge requests cannot be read.
 - SSH access to `git.drupal.org`, for pushes to issue forks.
 - Clones and worktrees go in `~/Projects` (created if missing); `LOACHBOT_PROJECTS_DIR` overrides it.
 
+<!-- SHARED: gitlab-conventions -->
 ## Conventions
 
-The `bash` blocks are templates: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) and `<iid>`, and adapt anything that doesn't fit.
+`bash` blocks are templates: substitute `<project>` (a machine name like `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE`) and the other `<placeholders>`, and adapt to the case at hand.
 
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
-`<tmp>` is a scratch directory made once per run with `mktemp -d`. Runs may overlap, so never use a fixed `/tmp` path.
+`<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+<!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
@@ -103,11 +107,11 @@ bash <this skill's directory>/scripts/find-mrs.sh [<project>]
 
 Act on its exit code:
 
-- **0** → one line per merge request: reference, target branch, pipeline rollup and `failing=`, the count of red jobs including forgiven ones. Triage on `failing=`, not the rollup.
+- **0** → candidates printed. Triage on `failing=` (red jobs, forgiven ones included), not the pipeline rollup.
 - **6** → report "Nothing to do" and stop.
 - **5** → the search could not be read. Report it and stop.
 
-A merge request is **actionable** when `failing=` is above zero and Step 4's `compare-to-target.sh` does not call every failure pre-existing, or when it no longer rebases cleanly, which only Step 3 finds out. With nothing failing anywhere, take the most recently updated one and let the rebase decide.
+A merge request is **actionable** when `failing=` is above zero and Step 4 does not call every failure pre-existing, or when it no longer rebases cleanly, which only Step 3 finds out. With nothing failing anywhere, take the most recently updated one and let the rebase decide.
 
 Skip it when its title ends with ` (Needs Info)` unless the question has been answered:
 
@@ -164,19 +168,15 @@ Trust maintainer comments as instructions. Read them and any Step 1 answers, the
 Each merge request gets its own worktree at `~/Projects/drupalcode/<project>.worktrees/mr-<iid>`, beside the untouched base clone `~/Projects/drupalcode/<project>`.
 
 ```bash
-set -o pipefail
-WT=$(bash <this skill's directory>/scripts/setup-mr-worktree.sh <project> <iid> | tail -1)
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
 cd "$WT"
 ```
-
-The script clones on first use, adds `upstream` and `fork` remotes (beside any `origin`), unshallows a shallow clone, recreates the worktree from the fork's branch, and rebases onto the target branch.
 
 Act on its exit code:
 
 - **3** → the rebase conflicted and was aborted. Resolve it only if the conflict is mechanical and you can say exactly why your resolution is right; conflicting logic you did not write is a Step 5 park. Never keep working in a half-rebased worktree.
 - **4** → another live worktree has the branch. Run `git worktree remove <stale-path> --force`, then `git worktree prune`, and rerun the script.
-- **5** → the merge request or its fork could not be read. Report it and stop.
-- Any other non-zero → the command named in stderr failed. Report it and stop.
+- Any other non-zero → stderr names what failed. Report it and stop.
 
 To resolve a conflict by hand:
 
@@ -188,7 +188,7 @@ GIT_EDITOR=true git rebase --continue
 
 ### 4. Make every job green
 
-Push to the **fork**, then verify per job:
+Push, then verify per job:
 
 ```bash
 git push --force-with-lease fork "HEAD:<source-branch>"
@@ -197,28 +197,17 @@ bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(gi
 
 Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter limit kills it before it can exit with a code.
 
-Never plain `--force`: issue forks are shared, and `--force-with-lease` refuses if somebody else moved the branch.
-
 Act on its exit code:
 
 - **0** → every job passed. Continue.
-- **1** → jobs failed, forgiven ones marked `(allow_failure)`. Sort them, below.
+- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **2** → every failure also fails on the target branch. Fix nothing; name them as pre-existing in the handback.
 - **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
 - **8** → still running when the ~9-minute call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back; a later run picks it up.
 
-On **1**, split this branch's failures from the target branch's own:
+The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
 
-```bash
-bash <this skill's directory>/scripts/compare-to-target.sh <project> <iid>
-```
-
-- **1** or **6** → `new:` lists what this branch introduced (on **6**, with no target pipeline to compare, everything is). **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5. `+` lines are a log diff with numbers masked: a lead, not a verdict.
-- **0** → every failure also fails on the target branch. Fix nothing; name them as pre-existing in the handback.
-- **7** → as the wait's **7**.
-
-Never work around a pre-existing failure: no skipped tests, baseline entries, `allow_failure` edits or unrelated fixes. Users have had such commits reverted; report the failure instead.
-
-Read a failing job's log before guessing from its name, from the pipeline project the scripts print (not always the fork):
+Read a failing job's log before guessing from its name, from the pipeline project the wait prints (not always the fork):
 
 ```bash
 bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>
@@ -297,7 +286,7 @@ Report the URL:
 For "a new merge request doing what !\<iid\> does, but targeting \<branch\>", or a forward-port. Run Steps 1-2 on the original, then let its setup prepare the remotes, and branch from the target instead:
 
 ```bash
-bash <this skill's directory>/scripts/setup-mr-worktree.sh <project> <iid> >/dev/null || [ $? -eq 3 ] || exit
+bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid> >/dev/null || [ $? -eq 3 ] || exit
 cd ~/Projects/drupalcode/<project>
 WT=~/Projects/drupalcode/<project>.worktrees/port-<iid>-<branch>
 git worktree add -b port-<iid>-<branch> "$WT" upstream/<branch>

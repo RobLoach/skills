@@ -8,22 +8,26 @@ metadata:
 ---
 # LoachBot GitLab Merge Request Reviewer
 
+<!-- SHARED: gitlab-prerequisites -->
 ## Prerequisites
 
-- `glab` is authenticated against drupal.org: run `glab auth status --hostname git.drupalcode.org` first; if it fails, report that and stop. `glab auth login --hostname git.drupalcode.org` fixes it.
-- `jq` is on `PATH`; the scripts parse JSON with it.
-- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab, such as Drupal core. Reads need no authentication. Without it, those issues cannot be read.
-- Paths assume the `project/` namespace. For sandboxes set `LOACHBOT_GITLAB_NAMESPACE=sandbox`; `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab.
+- `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
+- `jq` on `PATH`; the scripts parse JSON with it.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+<!-- /SHARED: gitlab-prerequisites -->
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` for projects whose issues never moved to GitLab, such as Drupal core; reads need no login. Without it, those issues cannot be read.
 
 Unless asked to apply its findings (Step 8), this skill never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request.
 
+<!-- SHARED: gitlab-conventions -->
 ## Conventions
 
-The `bash` blocks are templates: substitute `<project>` (a machine name such as `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE` when set) and `<iid>`, and adapt anything that doesn't fit.
+`bash` blocks are templates: substitute `<project>` (a machine name like `ai_ckeditor`, never `project/ai_ckeditor`), `<namespace>` (`project`, or `LOACHBOT_GITLAB_NAMESPACE`) and the other `<placeholders>`, and adapt to the case at hand.
 
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
-`<tmp>` is a scratch directory made once per run with `mktemp -d`; runs may overlap, so never use a fixed `/tmp` path.
+`<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+<!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
 ## Sub-agents
@@ -118,7 +122,7 @@ If the author is you, review it when asked, but open the summary by saying you w
 bash <this skill's directory>/scripts/review-context.sh <project> <iid> > <tmp>/review.json
 ```
 
-One JSON object: the merge request, its `diff_refs`, the issue number, changed files with diffs, every pipeline job, the failing ones, and existing threads; the header documents the shape. Exit **5** means the merge request could not be read: report it and stop.
+Exit **5** means the merge request could not be read: report it and stop.
 
 Read the existing threads before forming any opinion, so you don't repeat an earlier review:
 
@@ -180,22 +184,16 @@ Beyond ordinary code review, check:
 
 ### 5. Read the pipeline, not the badge
 
-`failing_jobs` from Step 2 is authoritative, not the rollup. A forgiven failure counts like any other.
-
-```bash
-jq -r '.failing_jobs[] | "\(.name): \(.status)\(if .allow_failure then " (forgiven by the pipeline)" else "" end) job=\(.id)"' <tmp>/review.json
-```
-
-A failure can predate the branch, so compare with the target branch before blaming the change:
+A forgiven failure counts like any other, but a failure can predate the branch, so compare per job with the target branch before blaming the change:
 
 ```bash
 bash <this skill's directory>/scripts/compare-to-target.sh <project> <iid>
 ```
 
+- **0** → nothing failing, or all pre-existing: mention those in the summary as not this branch's, not as findings.
 - **1** → `new:` failures are this branch's: findings. `+` lines are a log diff with numbers masked, so read the log before citing one.
-- **0** → all pre-existing: mention them in the summary as not this branch's, not as findings.
-- **6** → no target pipeline to compare: treat failures as findings and say they could not be checked.
-- **7** → jobs unreadable: say so in the summary.
+- **6** → no target pipeline to compare: everything under `new:` is a finding, and say it could not be checked.
+- **7** → no pipeline, or its jobs unreadable: say so in the summary.
 
 Read a log from `pipeline_project_id`, not the fork:
 
@@ -262,7 +260,16 @@ When nothing blocks, **stop**. Do not set `state::rtbc`, approve or merge: say n
 
 ### 8. Fix it, when asked
 
-Only when the user asks to apply findings to the merge request. This leaves the read-only review: use `loachbot-gitlab-mr`'s Steps 3-4 and rules (`setup-mr-worktree.sh` for a worktree on the fork's branch, `--force-with-lease` to `fork`, then `wait-for-pipeline.sh` and `compare-to-target.sh`). Without that skill: clone the project, add the source fork as a remote, work in a worktree of its branch, push with `--force-with-lease`, and check every job.
+Only when the user asks to apply findings to the merge request. This leaves the read-only review, under `loachbot-gitlab-mr`'s rules: `--force-with-lease` to `fork`, then its Step 4 (`wait-for-pipeline.sh`) until every job is green. Take a worktree on the fork's branch, rebased:
+
+```bash
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
+cd "$WT"
+```
+
+- **3** → the rebase conflicted and was aborted. Leave it to `loachbot-gitlab-mr`; report it and stop.
+- **4** → another live worktree has the branch. Run `git worktree remove <stale-path> --force`, then `git worktree prune`, and rerun.
+- Any other non-zero → stderr names what failed. Report it and stop.
 
 Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents). One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`.
 
