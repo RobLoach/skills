@@ -79,14 +79,26 @@ fi
 
 cd "$BASE"
 
-git remote set-url upstream "$UPSTREAM_URL"
+# A clone made by hand, or adopted by loachbot-gitlab-planner, may only have `origin`.
+# Add `upstream` beside it rather than renaming, so the user's own remote keeps working.
+if git remote | grep -qx upstream; then
+    git remote set-url upstream "$UPSTREAM_URL"
+else
+    git remote add upstream "$UPSTREAM_URL"
+fi
 if git remote | grep -qx fork; then
     git remote set-url fork "$FORK_URL"
 else
     git remote add fork "$FORK_URL"
 fi
 
-git fetch --prune upstream >&2
+# A shallow clone has no merge base, so the rebase below would replay the target
+# branch's entire history (one did: 1,355 commits) instead of the branch's own.
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    git fetch --unshallow --prune upstream >&2
+else
+    git fetch --prune upstream >&2
+fi
 git fetch --prune fork >&2
 
 # A still-live worktree holding this branch has to be dealt with by the caller:

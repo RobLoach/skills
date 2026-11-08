@@ -41,8 +41,19 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
+
+<!-- SHARED: repeated-runs -->
+## Repeated runs
+
+When the user asks for several runs ("five times", "until there aren't any left", "a sub-agent for each"):
+
+1. Run them one at a time, never overlapping: search results lag, so overlapping runs pick the same item.
+2. With sub-agents, give each run its own, launched only after the previous one has reported. Its prompt carries the skill name and arguments, "Follow the skill from Step 1", the items earlier runs already handled or parked (to skip), and "Wait for your own sub-agents to finish before reporting".
+3. Stop early on "Nothing to do".
+4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
+<!-- /SHARED: repeated-runs -->
 
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
@@ -192,11 +203,12 @@ It creates the fork with `/do:fork` if missing, and requests push access if you 
 Then take a worktree at `~/Projects/drupalcode/<project>.worktrees/issue-<issue-iid>`:
 
 ```bash
+set -o pipefail
 WT=$(bash <this skill's directory>/scripts/setup-issue-worktree.sh <project> <issue-iid> | tail -1)
 cd "$WT"
 ```
 
-It prints `fork_branch=`, `target_branch=` and `resumed=` on stderr for Step 6. Act on its exit code:
+It adds `upstream` beside any `origin`, unshallows a shallow clone, and prints `fork_branch=`, `target_branch=` and `resumed=` on stderr for Step 6. Act on its exit code:
 
 - **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; a conflict in logic you did not write is a Step 8 park. Never work in a half-rebased worktree.
 - **4** — another live worktree has the branch. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and rerun.
@@ -207,10 +219,10 @@ It prints `fork_branch=`, `target_branch=` and `resumed=` on stderr for Step 6. 
 
 ### 5. Do the work
 
-Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Then commit inside `$WT`:
+Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Then commit inside `$WT`, after checking `git status --short` and staging only the files the change meant to touch (delete stray artifacts or leave them untracked):
 
 ```bash
-git add -A
+git add <paths>
 if git diff --cached --quiet; then
     echo "nothing staged: no code change was needed"
 else
@@ -273,20 +285,44 @@ Not a draft: reviewers go by the issue's `state::` label, and nobody reviews a d
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> "$MR_IID" "$(git rev-parse HEAD)"
 ```
 
+Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter limit kills it before it can exit with a code.
+
 Act on its exit code:
 
 - **0** → every job passed, or no CI. Continue.
-- **1** → jobs failed, forgiven ones marked `(allow_failure)`. **Fix all of them.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8.
+- **1** → jobs failed, forgiven ones marked `(allow_failure)`. Sort them, below.
 - **7** → pipeline unreadable. Unknown is not passing: report it with the merge request URL and stop.
-- **8** → still running after the wait. Report pending jobs and the URL; stop without handing back.
+- **8** → still running when the ~9-minute call ended. Run it again; after three runs, report pending jobs and the URL and stop without handing back.
 
 After **7** or **8**, tell the user a `loachbot-gitlab-mr` run finishes it once CI settles (Step 1 now skips it).
 
-Read a failing job's log, using the pipeline project the script prints (it may be the parent, not the fork):
+On **1**, split this branch's failures from the target branch's own:
 
 ```bash
-glab api --hostname git.drupalcode.org "projects/<pipeline-project>/jobs/<job-id>/trace"
+bash <this skill's directory>/scripts/compare-to-target.sh <project> "$MR_IID"
 ```
+
+- **1** or **6** → `new:` lists what this branch introduced (on **6**, with no target pipeline to compare, everything is). **Fix all of it.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **0** → every failure also fails on the target branch. Fix nothing; name them in the handback instead of "The pipeline is green."
+- **7** → as the wait's **7**.
+
+Never work around a pre-existing failure (skipped tests, baseline entries, `allow_failure` edits): report it instead.
+
+Read a failing job's log from the pipeline project the scripts print (it may be the parent, not the fork):
+
+```bash
+bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>
+```
+
+Exit **7** means the wrong project or job id: check both. Reproduce it locally before pushing a guess.
+
+<!-- SHARED: local-tests -->
+#### Running tests locally
+
+- **DDEV** (`ddev` on `PATH`): in the worktree, `ddev config --project-type=drupal --docroot=web --project-name="<project>-$(basename "$WT")" && ddev add-on get ddev/ddev-drupal-contrib && ddev start && ddev poser && ddev symlink-project`, then `ddev phpunit`, `ddev phpcs`, `ddev phpstan` or `ddev eslint` mirror the CI jobs.
+- **Without DDEV**, unit tests need nothing more. Kernel and functional tests need a database, and Drupal 11 refuses SQLite older than 3.45; check PHP's own with `php -r 'echo (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn();'`. Older, use a container: `docker run -d --rm -p 3306:3306 -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=db mariadb:lts` with `SIMPLETEST_DB=mysql://root:root@127.0.0.1/db`.
+- Never commit the harness: add `.ddev/`, `web/`, `vendor/` and `composer.contrib.*` to `$(git rev-parse --git-common-dir)/info/exclude`, which every worktree shares, so they never show up as untracked.
+<!-- /SHARED: local-tests -->
 
 ### 8. When it's unclear
 
@@ -360,7 +396,7 @@ List only what is outstanding; only the first two appear every run.
 
 ## Rules
 
-- One issue per run. For multiple runs, repeat from Step 1 sequentially (search lags, so overlapping runs pick the same issue). Stop at "Nothing to do".
+- One issue per run; for more, see [Repeated runs](#repeated-runs).
 - Only claim issues you reported, unless the user names one.
 - Finish what is already claimed before claiming more: a `resume` outranks a `ready`.
 - Push to the `fork` remote, never to `upstream`, and never with a force other than `--force-with-lease`.

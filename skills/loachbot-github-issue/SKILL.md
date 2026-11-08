@@ -40,8 +40,19 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
+
+<!-- SHARED: repeated-runs -->
+## Repeated runs
+
+When the user asks for several runs ("five times", "until there aren't any left", "a sub-agent for each"):
+
+1. Run them one at a time, never overlapping: search results lag, so overlapping runs pick the same item.
+2. With sub-agents, give each run its own, launched only after the previous one has reported. Its prompt carries the skill name and arguments, "Follow the skill from Step 1", the items earlier runs already handled or parked (to skip), and "Wait for your own sub-agents to finish before reporting".
+3. Stop early on "Nothing to do".
+4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
+<!-- /SHARED: repeated-runs -->
 
 ## Workflow
 
@@ -113,6 +124,7 @@ Investigate through parallel sub-agents, keeping file contents out of the main t
 Each issue gets its own worktree at `~/Projects/<owner>/<repo>.worktrees/issue-<number>` on branch `fix/issue-<number>`, the same across runs whatever the title. The base clone `~/Projects/<owner>/<repo>` stays on the default branch.
 
 ```bash
+set -o pipefail
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <owner> <repo> <number> | tail -1)
 cd "$WT"
 ```
@@ -121,12 +133,13 @@ The script clones if needed, recreates the worktree, resumes a pushed `origin/fi
 
 - **4** — another live worktree has the branch. Run `git worktree remove <stale-path> --force` and `git worktree prune`, then rerun the script.
 - **3** — the rebase conflicted and was aborted. Park it as in Step 4 and stop; never work in a half-rebased worktree.
+- **9** — a submodule could not be fetched (stderr names it); the worktree is still usable. If the fix does not touch that submodule, continue without it. Otherwise park it as in Step 4, naming the submodule, and stop.
 - Any other non-zero — stderr names the failing command. Report it and stop; do not force through.
 
-Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then commit inside `$WT`:
+Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then review `git status --short` and stage only the files the fix meant to change: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them.
 
 ```bash
-git add -A
+git add <paths>
 if git diff --cached --quiet; then
     echo "nothing staged: no code change was needed"
 else
@@ -193,7 +206,7 @@ Report the PR to the user:
 
 ## Rules
 
-- One issue per run. For multiple runs, repeat from Step 1 one at a time, never overlapping, since lagging search results would let two runs pick the same issue. Stop early on "Nothing to do". Within a run, fan investigation out to sub-agents; the main thread keeps the git, PR and un-assign steps.
+- One issue per run; for more, see [Repeated runs](#repeated-runs). Within a run, the main thread keeps the git, PR and un-assign steps.
 - Never comment except to ask for clarification (Step 4).
 - Run all git operations for an issue inside its worktree; never check out, branch or commit in the base clone.
 <!-- SHARED: one-run-per-clone -->

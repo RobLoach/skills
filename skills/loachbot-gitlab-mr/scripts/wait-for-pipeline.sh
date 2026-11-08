@@ -12,7 +12,13 @@
 # For a few seconds after a push the merge request still points at the *previous*
 # commit's pipeline, and settling on that one reports a stale result: a green from
 # before the change, or a red that the push already fixed. With [head-sha] given, only a
-# pipeline for that commit counts.
+# pipeline for that commit counts. [head-sha] must be a full 40-character SHA; a short
+# one is expanded with the current checkout's git, since GitLab only reports full SHAs.
+#
+# A merged-results pipeline (project/ai runs them) does not run [head-sha] itself: it
+# runs refs/merge-requests/<iid>/merge, a merge commit with [head-sha] as one parent. So
+# a pipeline whose commit has [head-sha] among its parents counts as well; without that,
+# such a project is never matched and every wait ends in 8.
 #
 # Drupal's GitLab CI template marks some jobs `allow_failure: true`: they fail without
 # failing the pipeline, so `glab ci status` and the merge request's own badge both agree
@@ -42,15 +48,18 @@
 # API's list, and only the latest attempt reflects reality.
 #
 # Polls rather than streaming, so bounding the wait needs nothing but `sleep` - no
-# GNU `timeout`, which is absent on stock macOS. Only the settled result is printed.
+# GNU `timeout`, which is absent on stock macOS. The whole wait is capped at
+# LOACHBOT_PIPELINE_TIMEOUT seconds (default 510) so one call fits a 10-minute tool
+# limit; a progress line goes to stderr on every poll so a long wait is not mistaken for
+# a hang. On 8, just run it again.
 #
 # Exit codes:
 #   0  Every job passed, or the project has no CI at all.
 #   1  At least one job failed. The failures are printed, forgiven ones marked
 #      `(allow_failure)`; fix them and push again.
 #   7  The pipeline or its jobs could not be read. Unknown is not passing: report it.
-#   8  Still running after the full wait, or no pipeline for [head-sha] ever appeared.
-#      Report the pending jobs and stop.
+#   8  Still running when the time ran out, or no pipeline for [head-sha] appeared yet.
+#      Run it again; report the pending jobs only once repeats stop helping.
 
 set -euo pipefail
 
@@ -63,12 +72,45 @@ HEAD_SHA=${3:-}
 
 SETTLE_SECONDS=${LOACHBOT_PIPELINE_SETTLE:-20}
 POLL_SECONDS=${LOACHBOT_PIPELINE_POLL:-20}
-MAX_POLLS=${LOACHBOT_PIPELINE_MAX_POLLS:-90}
+TIMEOUT_SECONDS=${LOACHBOT_PIPELINE_TIMEOUT:-510}
 NO_PIPELINE_PROBES=${LOACHBOT_PIPELINE_PROBES:-5}
+
+if [ -n "$HEAD_SHA" ] && ! [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]]; then
+    if ! HEAD_SHA=$(git rev-parse --verify --quiet "$HEAD_SHA^{commit}" 2>/dev/null); then
+        echo "[head-sha] must be a full 40-character SHA, or resolvable here: $3" >&2
+        exit 64
+    fi
+fi
 
 api() { glab api --hostname "$HOST" "$@"; }
 
 read_mr() { api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null; }
+
+out_of_time() { [ "$SECONDS" -ge "$TIMEOUT_SECONDS" ]; }
+
+# Is the attached pipeline the one for [head-sha]? Directly, or as a merged-results
+# pipeline whose merge commit has it as a parent. Remembered per pipeline SHA, so the
+# commit is read once rather than on every poll.
+CHECKED_SHA=
+CHECKED_MATCH=false
+pipeline_matches_head() {
+    if [ -z "$HEAD_SHA" ] || [ "$PIPELINE_SHA" = "$HEAD_SHA" ]; then
+        return 0
+    fi
+    if [ "$PIPELINE_SHA" != "$CHECKED_SHA" ]; then
+        # Remember the answer only once the read succeeds: a dropped call must be
+        # retried on the next poll, not cached as "no match" for the whole wait.
+        local PARENTS
+        PARENTS=$(api "projects/$PIPELINE_PROJECT/repository/commits/$PIPELINE_SHA" 2>/dev/null |
+            jq -r '.parent_ids[]?') || return 1
+        CHECKED_SHA=$PIPELINE_SHA
+        CHECKED_MATCH=false
+        if printf '%s\n' "$PARENTS" | grep -qx "$HEAD_SHA"; then
+            CHECKED_MATCH=true
+        fi
+    fi
+    [ "$CHECKED_MATCH" = true ]
+}
 
 # A pipeline takes a moment to attach after a push.
 sleep "$SETTLE_SECONDS"
@@ -81,7 +123,9 @@ PIPELINE_ID=
 PIPELINE_SHA=
 PIPELINE_PROJECT=
 MR_IID=
-for POLL in $(seq 1 "$MAX_POLLS"); do
+POLL=0
+while :; do
+    POLL=$((POLL + 1))
     if MR=$(read_mr); then
         MR_IID=$(printf '%s' "$MR" | jq -r '.iid // empty')
         PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
@@ -90,13 +134,15 @@ for POLL in $(seq 1 "$MAX_POLLS"); do
         PIPELINE_PROJECT=$(printf '%s' "$MR" |
             jq -r '.head_pipeline.project_id // .source_project_id // empty')
     fi
-    if [ -n "$PIPELINE_ID" ] && { [ -z "$HEAD_SHA" ] || [ "$PIPELINE_SHA" = "$HEAD_SHA" ]; }; then
+    if [ -n "$PIPELINE_ID" ] && pipeline_matches_head; then
         break
     fi
     # Nothing attached at all after the probes: an unreadable merge request, or no CI.
     if [ -z "$PIPELINE_ID" ] && [ "$POLL" -ge "$NO_PIPELINE_PROBES" ]; then
         break
     fi
+    out_of_time && break
+    echo "waiting for a pipeline for ${HEAD_SHA:-the head commit} (${SECONDS}s)" >&2
     sleep "$POLL_SECONDS"
 done
 
@@ -110,8 +156,8 @@ if [ -z "$PIPELINE_ID" ]; then
     exit 0
 fi
 
-if [ -n "$HEAD_SHA" ] && [ "$PIPELINE_SHA" != "$HEAD_SHA" ]; then
-    echo "!$IID still points at pipeline $PIPELINE_ID for $PIPELINE_SHA; none for $HEAD_SHA appeared" >&2
+if ! pipeline_matches_head; then
+    echo "!$IID still points at pipeline $PIPELINE_ID for $PIPELINE_SHA; none for $HEAD_SHA yet" >&2
     exit 8
 fi
 
@@ -123,7 +169,7 @@ fi
 # "cannot read" - the same reasoning as the no-pipeline probes above.
 STATUS=
 MISSES=0
-for _ in $(seq 1 "$MAX_POLLS"); do
+while :; do
     if ! STATUS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID" 2>/dev/null |
         jq -r '.status // empty'); then
         STATUS=
@@ -140,13 +186,15 @@ for _ in $(seq 1 "$MAX_POLLS"); do
             ;;
         *) MISSES=0 ;;
     esac
+    out_of_time && break
+    echo "pipeline $PIPELINE_ID is ${STATUS:-unreadable} (${SECONDS}s)" >&2
     sleep "$POLL_SECONDS"
 done
 
 case $STATUS in
     success | failed | canceled | skipped | manual | scheduled) ;;
     *)
-        echo "pipeline $PIPELINE_ID is still $STATUS after the full wait" >&2
+        echo "pipeline $PIPELINE_ID is still $STATUS after ${SECONDS}s; run this again" >&2
         exit 8
         ;;
 esac

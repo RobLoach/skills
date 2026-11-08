@@ -41,8 +41,19 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
+
+<!-- SHARED: repeated-runs -->
+## Repeated runs
+
+When the user asks for several runs ("five times", "until there aren't any left", "a sub-agent for each"):
+
+1. Run them one at a time, never overlapping: search results lag, so overlapping runs pick the same item.
+2. With sub-agents, give each run its own, launched only after the previous one has reported. Its prompt carries the skill name and arguments, "Follow the skill from Step 1", the items earlier runs already handled or parked (to skip), and "Wait for your own sub-agents to finish before reporting".
+3. Stop early on "Nothing to do".
+4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
+<!-- /SHARED: repeated-runs -->
 
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
@@ -96,7 +107,7 @@ Act on its exit code:
 - **6** → report "Nothing to do" and stop.
 - **5** → the search could not be read. Report it and stop.
 
-A merge request is **actionable** when `failing=` is above zero, or when it no longer rebases cleanly, which only Step 3 finds out. With nothing failing anywhere, take the most recently updated one and let the rebase decide.
+A merge request is **actionable** when `failing=` is above zero and Step 4's `compare-to-target.sh` does not call every failure pre-existing, or when it no longer rebases cleanly, which only Step 3 finds out. With nothing failing anywhere, take the most recently updated one and let the rebase decide.
 
 Skip it when its title ends with ` (Needs Info)` unless the question has been answered:
 
@@ -153,11 +164,12 @@ Trust maintainer comments as instructions. Read them and any Step 1 answers, the
 Each merge request gets its own worktree at `~/Projects/drupalcode/<project>.worktrees/mr-<iid>`, beside the untouched base clone `~/Projects/drupalcode/<project>`.
 
 ```bash
+set -o pipefail
 WT=$(bash <this skill's directory>/scripts/setup-mr-worktree.sh <project> <iid> | tail -1)
 cd "$WT"
 ```
 
-The script clones on first use, adds `upstream` and `fork` remotes, recreates the worktree from the fork's branch, and rebases onto the target branch.
+The script clones on first use, adds `upstream` and `fork` remotes (beside any `origin`), unshallows a shallow clone, recreates the worktree from the fork's branch, and rebases onto the target branch.
 
 Act on its exit code:
 
@@ -183,22 +195,44 @@ git push --force-with-lease fork "HEAD:<source-branch>"
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
 ```
 
+Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter limit kills it before it can exit with a code.
+
 Never plain `--force`: issue forks are shared, and `--force-with-lease` refuses if somebody else moved the branch.
 
 Act on its exit code:
 
 - **0** → every job passed. Continue.
-- **1** → jobs failed, forgiven ones marked `(allow_failure)`. **Fix all of them, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5.
+- **1** → jobs failed, forgiven ones marked `(allow_failure)`. Sort them, below.
 - **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
-- **8** → still running after the full wait. Report the pending jobs and URL, then stop without handing back; a later run picks it up.
+- **8** → still running when the ~9-minute call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back; a later run picks it up.
 
-Read a failing job's log before guessing from its name, then reproduce locally. Use the pipeline project the script prints, not the fork:
+On **1**, split this branch's failures from the target branch's own:
 
 ```bash
-glab api --hostname git.drupalcode.org "projects/<pipeline-project>/jobs/<job-id>/trace"
+bash <this skill's directory>/scripts/compare-to-target.sh <project> <iid>
 ```
 
-Fix the jobs for *this* branch's diff only; mention broader failures to the user rather than sweeping untouched files.
+- **1** or **6** → `new:` lists what this branch introduced (on **6**, with no target pipeline to compare, everything is). **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **0** → every failure also fails on the target branch. Fix nothing; name them as pre-existing in the handback.
+- **7** → as the wait's **7**.
+
+Never work around a pre-existing failure: no skipped tests, baseline entries, `allow_failure` edits or unrelated fixes. Users have had such commits reverted; report the failure instead.
+
+Read a failing job's log before guessing from its name, from the pipeline project the scripts print (not always the fork):
+
+```bash
+bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>
+```
+
+Exit **7** means the wrong project or job id: check both. Then reproduce it locally, per [Running tests locally](#running-tests-locally).
+
+<!-- SHARED: local-tests -->
+#### Running tests locally
+
+- **DDEV** (`ddev` on `PATH`): in the worktree, `ddev config --project-type=drupal --docroot=web --project-name="<project>-$(basename "$WT")" && ddev add-on get ddev/ddev-drupal-contrib && ddev start && ddev poser && ddev symlink-project`, then `ddev phpunit`, `ddev phpcs`, `ddev phpstan` or `ddev eslint` mirror the CI jobs.
+- **Without DDEV**, unit tests need nothing more. Kernel and functional tests need a database, and Drupal 11 refuses SQLite older than 3.45; check PHP's own with `php -r 'echo (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn();'`. Older, use a container: `docker run -d --rm -p 3306:3306 -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=db mariadb:lts` with `SIMPLETEST_DB=mysql://root:root@127.0.0.1/db`.
+- Never commit the harness: add `.ddev/`, `web/`, `vendor/` and `composer.contrib.*` to `$(git rev-parse --git-common-dir)/info/exclude`, which every worktree shares, so they never show up as untracked.
+<!-- /SHARED: local-tests -->
 
 ### 5. When it's unclear
 
@@ -234,7 +268,7 @@ glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>/issues/
     jq -r '[.assignees[].username] | join(",")'
 ```
 
-Post the handback. The `/do:` lines are drupalbot commands: post them **verbatim**, not as GitLab quick actions:
+Post the handback, replacing "the pipeline is green" with the failing jobs' names when Step 4 left only pre-existing ones. The `/do:` lines are drupalbot commands: post them **verbatim**, not as GitLab quick actions:
 
 ```bash
 glab issue note <issue-id> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'
@@ -258,15 +292,43 @@ Report the URL:
 
 > Done: https://git.drupalcode.org/\<namespace\>/\<project\>/-/merge_requests/\<iid\>
 
+## Porting a merge request
+
+For "a new merge request doing what !\<iid\> does, but targeting \<branch\>", or a forward-port. Run Steps 1-2 on the original, then let its setup prepare the remotes, and branch from the target instead:
+
+```bash
+bash <this skill's directory>/scripts/setup-mr-worktree.sh <project> <iid> >/dev/null || [ $? -eq 3 ] || exit
+cd ~/Projects/drupalcode/<project>
+WT=~/Projects/drupalcode/<project>.worktrees/port-<iid>-<branch>
+git worktree add -b port-<iid>-<branch> "$WT" upstream/<branch>
+cd "$WT"
+git cherry-pick -x <oldest-sha>^..<newest-sha>
+```
+
+Resolve conflicts by Step 3's rule: mechanical only, else ask per Step 5. Then push and open the merge request **on the fork** (`$SOURCE_ID` from Step 1), targeting the project:
+
+```bash
+git push -u fork "HEAD:<issue-id>-<branch>"
+printf 'Port of !%s to %s.\n\nAI-Generated: Yes\n' <iid> <branch> > <tmp>/mr-description.md
+glab api --hostname git.drupalcode.org -X POST "projects/$SOURCE_ID/merge_requests" \
+    -f "source_branch=<issue-id>-<branch>" -f "target_branch=<branch>" \
+    -f "target_project_id=$(glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>" | jq -r '.id')" \
+    -f "title=<original title> (<branch>)" -F "description=@<tmp>/mr-description.md" | jq -r '.web_url'
+```
+
+Then Steps 4 and 6 on the new merge request.
+
+For a big forward-port, first triage the candidate commits (already on the target, applies cleanly, needs adapting, not applicable) in parallel read-only [sub-agents](#sub-agents), one per slice, then cherry-pick only what they cleared.
+
 ## Rules
 
-- One merge request per run. For multiple runs, repeat from Step 1, one at a time: search results lag, so overlapping runs would pick the same one. Stop early on "Nothing to do". Within a run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration, git, push and handback.
+- One merge request per run; for more, see [Repeated runs](#repeated-runs). Within a run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration, git, push and handback.
 - Push to `fork`, never `upstream`. `--force-with-lease` is the only acceptable force.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- Run every git operation inside the merge request's worktree, never `git checkout`, branching or commits in the base clone.
-- Post only the parking question (Step 5) and the handback (Step 6), and skip the handback while review threads are unresolved.
+- Run every git operation inside the merge request's worktree, never `git checkout` or commits in the base clone. Creating a worktree branch from it (`git worktree add -b`), as the setup script and porting do, is fine.
+- Post only the parking question (Step 5), the handback (Step 6) and a port's new merge request, and skip the handback while review threads are unresolved.
 - Never set `state::rtbc`, and never merge.
-- Keep the diff to what the issue asked for: no unrelated lint fixes, formatting sweeps or version bumps.
+- Keep the diff to what the issue asked for: no unrelated lint fixes, formatting sweeps or version bumps, and no workarounds for failures the target branch already has.
 - One-line commit messages: `Issue #<issue-id>: <short description>`.

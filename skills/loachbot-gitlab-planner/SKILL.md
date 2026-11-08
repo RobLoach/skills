@@ -41,7 +41,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
 
 ## How drupal.org differs
@@ -81,6 +81,7 @@ Do not proceed without one. An issue fork (`issue/<project>-<id>`) resolves to t
 Clone into `~/Projects/drupalcode/<project>` if missing, otherwise reset to the remote default branch:
 
 ```bash
+set -o pipefail
 CLONE=$(bash <this skill's directory>/scripts/sync-project-clone.sh <project> | tail -1)
 cd "$CLONE"
 ```
@@ -241,7 +242,17 @@ glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>
     -f "title=<title>" \
     -f "labels=<comma-separated labels>" \
     -F "description=@<tmp>/planned-issue.md" |
-    jq -r '.web_url'
+    jq -r '"\(.web_url) iid=\(.iid) labels=\(.labels | join(","))"'
+```
+
+GitLab silently drops labels a non-member may not set, so check the `labels=` it echoes. Apply any missing ones through drupalbot, one verbatim `/do:` line each, as the other LoachBot skills do:
+
+```bash
+glab issue note <new-iid> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'
+/do:label ~"category::bug"
+/do:label ~"priority::normal"
+EOF
+)"
 ```
 
 Deliberate omissions:
@@ -257,7 +268,7 @@ Then report, in plan order, each filed issue's URL or each drafted body. Close w
 
 ## Rules
 
-- Write nothing to drupal.org except the issues the user explicitly approved: no comments, no `/do:` commands, no labels on existing items, no branches, no merge requests, no code edits.
+- Write nothing to drupal.org except the issues the user explicitly approved, plus a `/do:label` note when filing dropped their labels: no other comments or `/do:` commands, no labels on existing items, no branches, no merge requests, no code edits.
 - Never file an issue the user did not explicitly approve, nor into a queue you could not check for duplicates without saying so first.
 - File issues unassigned and with no `state::` label. A claim is a comment, and triage belongs to the maintainers.
 - Only apply labels the project has already defined. Filing against an undefined label creates it.
