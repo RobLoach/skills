@@ -36,7 +36,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
 
 ## Workflow
@@ -46,15 +46,18 @@ Verify what matters in a report: read the diff or re-run the command.
 Use, in order:
 
 1. A repo named in the prompt or skill arguments (URL or `owner/repo`).
-2. If the working directory is a git repo, its `origin`: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`.
-3. Otherwise ask the user. Do not proceed without one.
+2. A repo planned earlier in this conversation, on a re-run or "fresh pass".
+3. If the working directory is a git repo, its `origin`: `gh repo view --json nameWithOwner --jq '.nameWithOwner'`.
+4. Otherwise ask the user. Do not proceed without one.
+
+For several repos, run Steps 2-5 once per repo and present the plans together in Step 6.
 
 ### 2. Get the latest code
 
 Clone into `~/Projects/<owner>/<repo>`, or reset an existing clone to the remote default branch:
 
 ```bash
-CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo> | tail -1)
+CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>)
 cd "$CLONE"
 ```
 
@@ -83,9 +86,11 @@ gh api "search/issues?q=repo:<owner>/<repo>+is:issue&per_page=1" --jq '.total_co
 
 If the total exceeds what the list returned, treat the list as a sample, say so when presenting the plan, and search per candidate in Step 5.
 
+Optionally triage the open queue: issues that look done or obsolete (fixed by a merged PR or commit, code since removed), and open issues worth prioritizing alongside the new plan.
+
 ### 4. Establish goals and current state
 
-Summarize for the user:
+Show one line per Step 3 sub-agent with what it found, then summarize:
 
 ```
 Project: <title for the project>
@@ -132,18 +137,30 @@ Drop the candidate if any existing item:
 - has the same fix or goal, even under a different title
 - is already merged or in a PR that would make it redundant
 
-When in doubt, drop it rather than file a near-duplicate.
+When in doubt, drop it rather than file a near-duplicate. On a fresh pass, also drop anything already proposed in this conversation.
 
-### 6. Present the plan and ask which to file
+Keep the candidates that missed the cut: a follow-up "anything else?" draws from them first.
 
-Present the plan ordered by return on investment, then ask which issues to create. Do **not** create any without explicit approval.
+### 6. Present the plan and ask what to do
+
+Present the plan ordered by return on investment. Number every list shown to the user; across repos, prefix IDs per repo (`P1`, `F1`). List any triage findings from Step 3 after it. Then ask which items to:
+
+1. **File as issues** (below).
+2. **Fix directly** on the default branch.
+3. **Open PRs** for.
+
+Do **not** act on any item without explicit approval. Close a triaged issue only when approved, with a comment saying why (`gh issue close <number> --repo <owner>/<repo> --comment "<why>"`).
+
+To fix or open PRs, work per item in a worktree off the default branch, never in the base clone: `git -C "$CLONE" worktree add -b plan-<id> "$CLONE.worktrees/plan-<id>" origin/<default-branch>`, removed once the item is done. Then: one commit each, a test that fails without the fix where practical, the project's checks passing, push (to the default branch, or a branch plus `gh pr create`), CI watched to green, then report the commit or PR URL. Unchosen candidates can still be filed as issues if the user asks.
+
+#### Filing issues
 
 Make each approved issue self-contained, needing nothing from this session: the grounding from step 3 (paths, line references, commits, links), the reason from step 4, and dependencies on issues filed earlier in this run by number (`Blocked by #12`). Include facts from your memory or notes only if fit for a public tracker: no client or personal details, credentials or internal URLs.
 
 Create them in plan order so later issues can reference earlier ones. Assign with `--assignee @me` unless the user said to assign someone else or leave it unassigned:
 
 ```bash
-gh issue create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me
+gh issue create --repo <owner>/<repo> --title "<title>" --body-file <tmp file> --assignee @me
 ```
 
 Pass `--label` only if the label exists (`gh label list --repo <owner>/<repo>`), and `--milestone` only if the milestone exists.
@@ -152,7 +169,7 @@ Report each created issue URL in plan order. Leave the rest unfiled.
 
 ## Rules
 
-- Never push branches, open PRs, or edit the project's code while planning. Beyond Step 2's reset, nothing is written locally or to the remote.
+- Never push, open PRs, close issues, or edit the project's code until the user picks that path for named items in Step 6. Until then, nothing beyond Step 2's reset is written locally or to the remote.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

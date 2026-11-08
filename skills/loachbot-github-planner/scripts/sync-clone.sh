@@ -10,8 +10,13 @@
 # are the user's to deal with, not this skill's. That path is just as likely to be the
 # user's own clone as a scratch one, so the bar is deliberately low.
 #
+# Planning reads code, it does not build it, so a first clone fetches blobs lazily and
+# skips submodules: --recurse-submodules spent minutes on ones like libretro-database.
+# A clone that already has submodules initialized keeps them in step, or the next run
+# would see them as local changes.
+#
 # Exit codes:
-#   0  Clean and current. The last line of stdout is the clone path.
+#   0  Clean and current. Stdout is the clone path, and nothing else.
 #   5  The existing clone holds local work: uncommitted changes, or commits that
 #      origin/<default> does not have. What was found has been printed to stderr;
 #      report it to the user and stop.
@@ -27,9 +32,13 @@ OWNER=$1
 REPO=$2
 BASE="${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/$OWNER/$REPO"
 
+# git checkout and reset chat on stdout, and the caller captures stdout as the path
+# without a pipe (a pipe would hide exit 5), so everything but the path goes to stderr.
+exec 3>&1 1>&2
+
 if [ ! -d "$BASE" ]; then
-    gh repo clone "$OWNER/$REPO" "$BASE" -- --recurse-submodules
-    echo "$BASE"
+    gh repo clone "$OWNER/$REPO" "$BASE" -- --filter=blob:none
+    echo "$BASE" >&3
     exit 0
 fi
 
@@ -63,6 +72,6 @@ git checkout "$DEFAULT"
 git reset --hard "origin/$DEFAULT"
 git clean -fd
 git submodule sync --recursive
-git submodule update --init --recursive
+git submodule update --recursive
 
-echo "$BASE"
+echo "$BASE" >&3

@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-review
-description: Review one drupal.org merge request against the issue it claims to fix and against Drupal's own standards, post the findings as resolvable inline threads plus one summary, and set the issue to needs-work only when a finding blocks. Read-only against git; never approves or merges. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, or asks to "run LoachBot Review", including repeated runs like "review the next three".
+description: Review one drupal.org merge request against the issue it claims to fix and against Drupal's own standards, post the findings as resolvable inline threads plus one summary, and set the issue to needs-work only when a finding blocks. Read-only against git unless asked to apply findings; never approves or merges. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, wants the findings applied, or asks to "run LoachBot Review", including repeated runs like "review the next three".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-review/SKILL.md
@@ -15,7 +15,7 @@ metadata:
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) is on `PATH` for projects whose issues never moved to GitLab, such as Drupal core. Reads need no authentication. Without it, those issues cannot be read.
 - Paths assume the `project/` namespace. For sandboxes set `LOACHBOT_GITLAB_NAMESPACE=sandbox`; `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab.
 
-This skill never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request.
+Unless asked to apply its findings (Step 8), this skill never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request.
 
 ## Conventions
 
@@ -41,8 +41,19 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
 <!-- /SHARED: sub-agents -->
+
+<!-- SHARED: repeated-runs -->
+## Repeated runs
+
+When the user asks for several runs ("five times", "until there aren't any left", "a sub-agent for each"):
+
+1. Run them one at a time, never overlapping: search results lag, so overlapping runs pick the same item.
+2. With sub-agents, give each run its own, launched only after the previous one has reported. Its prompt carries the skill name and arguments, "Follow the skill from Step 1", the items earlier runs already handled or parked (to skip), and "Wait for your own sub-agents to finish before reporting".
+3. Stop early on "Nothing to do".
+4. Finish with one table: run, item, outcome (done, parked, nothing to do), link, and what is waiting on the user. Then say how many runs completed out of how many asked.
+<!-- /SHARED: repeated-runs -->
 
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
@@ -77,6 +88,16 @@ Two `glab api` habits: `-f` sends a plain string while `-F` types its value and 
 ### 1. Pick one merge request
 
 **If the user named one** (a URL like `https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23`, or `ai_ckeditor!23`), review that one and skip the search.
+
+**If the user named an issue** (`.../-/issues/<n>`, `.../-/work_items/<n>`, `ai_ckeditor#<n>`, or `https://www.drupal.org/i/<n>`), review its open merge request, asking only if there are several:
+
+```bash
+# A GitLab issue or work item: <n> is the iid.
+glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>/issues/<n>/related_merge_requests" |
+    jq -r '.[] | select(.state == "opened") | .references.full'
+# A drupal.org node (drupal.org/i/<n>, /node/<n>): if it moved to a work item, use the one named.
+drupalorg mr:list <n> --format=llm
+```
 
 **Otherwise**, look for merge requests waiting on you:
 
@@ -159,20 +180,34 @@ Beyond ordinary code review, check:
 
 ### 5. Read the pipeline, not the badge
 
-`failing_jobs` from Step 2 is authoritative, not the rollup. Raise a forgiven failure as a finding like any other.
+`failing_jobs` from Step 2 is authoritative, not the rollup. A forgiven failure counts like any other.
 
 ```bash
 jq -r '.failing_jobs[] | "\(.name): \(.status)\(if .allow_failure then " (forgiven by the pipeline)" else "" end) job=\(.id)"' <tmp>/review.json
 ```
 
-Read a job's log before blaming the change, since a failure can predate the branch. Read it from `pipeline_project_id`, not the fork:
+A failure can predate the branch, so compare with the target branch before blaming the change:
 
 ```bash
-PIPELINE_PROJECT=$(jq -r '.pipeline_project_id' <tmp>/review.json)
-glab api --hostname git.drupalcode.org "projects/$PIPELINE_PROJECT/jobs/<job-id>/trace"
+bash <this skill's directory>/scripts/compare-to-target.sh <project> <iid>
 ```
 
+- **1** → `new:` failures are this branch's: findings. `+` lines are a log diff with numbers masked, so read the log before citing one.
+- **0** → all pre-existing: mention them in the summary as not this branch's, not as findings.
+- **6** → no target pipeline to compare: treat failures as findings and say they could not be checked.
+- **7** → jobs unreadable: say so in the summary.
+
+Read a log from `pipeline_project_id`, not the fork:
+
+```bash
+bash <this skill's directory>/scripts/job-log.sh "$(jq -r '.pipeline_project_id' <tmp>/review.json)" <job-id>
+```
+
+Exit **7** means the wrong project or job id: check both.
+
 ### 6. Post the findings
+
+**Report here only** when the user asked for the review in chat, or not to post it: post nothing to GitLab and skip Step 7. Reply with the findings as a numbered list, blocking first, each with `path:line` and the fix, then the pipeline state.
 
 A finding tied to a line goes inline as a resolvable thread. Write the body to a file, since the shell mangles markdown backticks and newlines:
 
@@ -225,11 +260,27 @@ A drupal.org-only issue has no `/do:` path, so do not attempt this: report the f
 
 When nothing blocks, **stop**. Do not set `state::rtbc`, approve or merge: say nothing blocks and let the user decide.
 
+### 8. Fix it, when asked
+
+Only when the user asks to apply findings to the merge request. This leaves the read-only review: use `loachbot-gitlab-mr`'s Steps 3-4 and rules (`setup-mr-worktree.sh` for a worktree on the fork's branch, `--force-with-lease` to `fork`, then `wait-for-pipeline.sh` and `compare-to-target.sh`). Without that skill: clone the project, add the source fork as a remote, work in a worktree of its branch, push with `--force-with-lease`, and check every job.
+
+Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents). One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`.
+
+Once pushed and green, reply on and resolve each fixed finding's thread, passing the commit that fixed it:
+
+```bash
+bash <this skill's directory>/scripts/resolve-threads.sh <project> <iid> <commit-sha> <discussion-id>...
+```
+
+- **0** → resolved. Report the commits.
+- **1** → the threads named on stderr were not resolved; resolving needs the author or a maintainer. Report them.
+- **5** → the merge request could not be read. Report it.
+
 ## Rules
 
-- Review exactly one merge request per run. For several, repeat the whole workflow per merge request, keeping each review's comments on its own merge request.
-- Read-only against git: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run.
+- Review exactly one merge request per run; for more, see [Repeated runs](#repeated-runs).
+- Read-only against git: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run. The one exception is Step 8, on request, under `loachbot-gitlab-mr`'s rules.
 - Never approve, set `state::rtbc` or merge. The most this skill sets is `state::needsWork`, and only when a finding genuinely blocks.
-- Post inline comments only on lines the diff touches, and one summary note per run. Reply in an existing thread rather than re-posting its finding (Steps 2 and 6).
+- Post inline comments only on lines the diff touches, and one summary note per run; nothing in report-here-only mode. Reply in an existing thread rather than re-posting its finding (Steps 2 and 6).
 - Separate blocking findings from suggestions, every time.
 - Judge the change against the issue and the target branch, not how you would have written it. Style preferences `phpcs` does not enforce are not findings.

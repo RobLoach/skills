@@ -77,7 +77,7 @@ Each skill also answers to its own name as a slash command — `/loachbot-github
 
 ### GitHub Planner
 
-Reads a repository, learns its goals, and proposes a set of GitHub issues to create within the repository itself.
+Reads a repository, learns its goals, and proposes a numbered, prioritized plan. Pick items to file as issues, fix directly on the default branch, or open as Pull Requests. It can also triage the existing issue queue, and plan several repositories at once.
 
 **Examples:**
 
@@ -86,6 +86,7 @@ Run LoachBot Planner
 plan issues for this project
 LoachBot, can you plan some issues for MyAwesomeProject?
 Plan some issues for my most popular repo
+Plan pntr_physfs and pntr_pixelfont, then make PRs for P1 and F2
 ```
 
 ### GitHub Issue Fixer
@@ -161,7 +162,7 @@ Run LoachBot GitLab Issues until there aren't any left
 
 Takes one of your open [drupal.org](https://www.drupal.org) merge requests, rebases it onto its target branch in a dedicated worktree, resolves what it safely can, and then makes **every** CI job green before handing the issue back for review with `/do:` commands.
 
-The emphasis on *every* is the point. Drupal.org's CI template marks some jobs `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. Which jobs varies by project: the lint jobs usually, but `eslint`, `composer` variants and even `phpunit` variants on some. This skill reads each job's own flag instead of the rollup, and treats a forgiven failure as a failure.
+The emphasis on *every* is the point. Drupal.org's CI template marks some jobs `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. Which jobs varies by project: the lint jobs usually, but `eslint`, `composer` variants and even `phpunit` variants on some. This skill reads each job's own flag instead of the rollup, and treats a forgiven failure as a failure — but only the failures this branch introduces. It compares against the target branch's latest pipeline, and reports failures that are already there instead of working around them.
 
 Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers. It fixes rebases and CI, not review findings, so while a merge request still has unresolved review threads it leaves the issue's state alone and tells you instead.
 
@@ -170,6 +171,7 @@ Point it at a merge request and it takes that one; ask without naming one and it
 ```
 Rebase https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23
 Fix the merge conflicts and pipeline on ai_image_crop!14
+Make a new MR that does what ai!33 does, but targets 2.x
 Run LoachBot MRs
 Run LoachBot MRs until there aren't any left
 ```
@@ -180,13 +182,14 @@ Reviews one [drupal.org](https://www.drupal.org) merge request — yours or some
 
 It starts from the issue rather than the code, because the most common real finding is scope: something the diff does that nobody asked for, or something the issue asked for that the diff never does. It also reads the pipeline per job, so a merge request sitting on a red but forgiven job behind a green badge gets called out.
 
-Entirely read-only against git — no clone, no checkout, no push — so it can run alongside anything else, including the Fixer working on the same merge request. It will set `state::needsWork` when a finding genuinely blocks, and it will never approve, merge, or set `state::rtbc`.
+Read-only against git by default — no clone, no checkout, no push — so it can run alongside anything else, including the Fixer working on the same merge request. Ask for the review "here" to get a numbered list without posting anything, or ask it to fix findings afterwards and it hands off to the Merge Request Fixer's worktree and resolves the threads it fixed. It will set `state::needsWork` when a finding genuinely blocks, and it will never approve, merge, or set `state::rtbc`.
 
 **Examples:**
 
 ```
 Review https://git.drupalcode.org/project/ai_ckeditor/-/merge_requests/23
 What's wrong with ai_image_crop!14?
+Review the MR for https://www.drupal.org/i/3586558, just give me the review here
 Run LoachBot Review
 Review the merge requests waiting on me
 ```
