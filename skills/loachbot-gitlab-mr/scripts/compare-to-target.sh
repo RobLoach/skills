@@ -56,10 +56,13 @@ failing_jobs() {
 }
 
 # A log reduced to its distinct lines, with what shifts between any two runs masked.
+# grep exits 1 when it filters out every line, which pipefail would report as an
+# unreadable log; only its 2, a real error, is allowed through.
 normalized_log() {
     bash "$HERE/job-log.sh" "$1" "$2" |
         sed -E 's#/builds/[^/ ]+/[^/ ]+#/builds/P#g; s/[0-9]+/N/g; s/[[:space:]]+/ /g; s/^ //; s/ $//' |
-        grep -vE '^.?$|correlation_id=|^(Running on|Waiting for pod|Checking out|Getting source|Fetching|Preparing|Using|Pulling|Downloading|Uploading|Direct download|Restoring cache|Saving cache|Created fresh)' |
+        { grep -vE '^.?$|correlation_id=|^(Running on|Waiting for pod|Checking out|Getting source|Fetching|Preparing|Using|Pulling|Downloading|Uploading|Direct download|Restoring cache|Saving cache|Created fresh)' ||
+            [ "$?" -eq 1 ]; } |
         sort -u
 }
 

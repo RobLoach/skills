@@ -30,7 +30,7 @@
 #
 # Exit codes:
 #   0  Context on stdout.
-#   5  The merge request could not be read. Report it.
+#   5  The merge request, its diff or its discussions could not be read. Report it.
 
 set -euo pipefail
 
@@ -75,27 +75,31 @@ if [ -n "$SOURCE_ID" ]; then
     [ -n "$REF" ] && ISSUE_REF=$(printf '%s' "$REF" | jq -R .)
 fi
 
-FILES='[]'
-if RAW_FILES=$(api --paginate \
+# An unreadable diff or discussion list is an error, never an empty one: an empty diff
+# reviews as "nothing to find", and empty discussions re-post findings already left.
+if ! RAW_FILES=$(api --paginate \
     "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/diffs?per_page=100" 2>/dev/null); then
-    FILES=$(printf '%s' "$RAW_FILES" |
-        jq -sc 'add // [] | map({new_path, old_path, new_file, deleted_file, renamed_file, diff})')
+    echo "cannot read the diff of !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
+    exit 5
 fi
+FILES=$(printf '%s' "$RAW_FILES" |
+    jq -sc 'add // [] | map({new_path, old_path, new_file, deleted_file, renamed_file, diff})')
 
-DISCUSSIONS='[]'
-if RAW_DISCUSSIONS=$(api --paginate \
+if ! RAW_DISCUSSIONS=$(api --paginate \
     "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/discussions?per_page=100" 2>/dev/null); then
-    DISCUSSIONS=$(printf '%s' "$RAW_DISCUSSIONS" | jq -sc '
-        add // []
-        | map(.notes[0] as $n | select($n.system | not) | {
-            id,
-            resolved: ($n.resolved // false),
-            path: ($n.position.new_path // null),
-            line: ($n.position.new_line // null),
-            author: $n.author.username,
-            body: ($n.body | .[0:300])
-        })')
+    echo "cannot read the discussions of !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
+    exit 5
 fi
+DISCUSSIONS=$(printf '%s' "$RAW_DISCUSSIONS" | jq -sc '
+    add // []
+    | map(.notes[0] as $n | select($n.system | not) | {
+        id,
+        resolved: ($n.resolved // false),
+        path: ($n.position.new_path // null),
+        line: ($n.position.new_line // null),
+        author: $n.author.username,
+        body: ($n.body | .[0:300])
+    })')
 
 # Diffs go through files rather than --argjson: a single argument is capped at 128 KiB on
 # Linux, and one large merge request's diff text is enough to hit it.

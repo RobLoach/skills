@@ -54,45 +54,56 @@ if [ "$(printf '%s' "${META:-null}" | jq -r '.id // empty')" = "" ]; then
     exit 6
 fi
 
+# Every read goes to a file and reaches jq through --slurpfile rather than --argjson: a
+# single argument is capped at 128 KiB on Linux, and a hundred issues with their
+# descriptions and links are several times that.
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+printf '%s' "$META" >"$TMP/meta.json"
+
 # A read allowed to come back empty or fail reads as [] so the output keeps its shape.
 read_array() {
-    local out
-    out=$(api "$1" 2>/dev/null) || out=''
-    if [ "$(printf '%s' "${out:-null}" | jq -r 'type')" = "array" ]; then
-        printf '%s' "$out"
-    else
-        printf '[]'
+    if ! api "$2" >"$TMP/$1.json" 2>/dev/null ||
+        [ "$(jq -r 'type' "$TMP/$1.json" 2>/dev/null)" != "array" ]; then
+        printf '[]' >"$TMP/$1.json"
     fi
 }
 
-OPEN_ISSUES='[]'
-CLOSED_ISSUES='[]'
+printf '[]' >"$TMP/open_issues.json"
+printf '[]' >"$TMP/closed_issues.json"
 if [ "$(printf '%s' "$META" | jq -r '.issues_enabled')" = "true" ]; then
-    OPEN_ISSUES=$(read_array \
-        "projects/$ENC/issues?state=opened&order_by=updated_at&sort=desc&per_page=$PAGE")
+    read_array open_issues \
+        "projects/$ENC/issues?state=opened&order_by=updated_at&sort=desc&per_page=$PAGE"
     # An issue fixed last month is the commonest thing a plan files again.
-    CLOSED_ISSUES=$(read_array \
-        "projects/$ENC/issues?state=closed&order_by=updated_at&sort=desc&per_page=50")
+    read_array closed_issues \
+        "projects/$ENC/issues?state=closed&order_by=updated_at&sort=desc&per_page=50"
 fi
 
-LABELS=$(read_array "projects/$ENC/labels?per_page=$PAGE")
-BRANCHES=$(read_array "projects/$ENC/repository/branches?per_page=$PAGE")
-TAGS=$(read_array "projects/$ENC/repository/tags?per_page=10")
-MERGE_REQUESTS=$(read_array \
-    "projects/$ENC/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50")
+read_array labels "projects/$ENC/labels?per_page=$PAGE"
+read_array branches "projects/$ENC/repository/branches?per_page=$PAGE"
+read_array tags "projects/$ENC/repository/tags?per_page=10"
+read_array merge_requests \
+    "projects/$ENC/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50"
 
 jq -n \
     --arg project "$PROJECT" \
     --arg path "$NAMESPACE/$PROJECT" \
     --argjson page "$PAGE" \
-    --argjson meta "$META" \
-    --argjson open_issues "$OPEN_ISSUES" \
-    --argjson closed_issues "$CLOSED_ISSUES" \
-    --argjson labels "$LABELS" \
-    --argjson branches "$BRANCHES" \
-    --argjson tags "$TAGS" \
-    --argjson merge_requests "$MERGE_REQUESTS" \
-    '($meta.open_issues_count // 0) as $total
+    --slurpfile meta "$TMP/meta.json" \
+    --slurpfile open_issues "$TMP/open_issues.json" \
+    --slurpfile closed_issues "$TMP/closed_issues.json" \
+    --slurpfile labels "$TMP/labels.json" \
+    --slurpfile branches "$TMP/branches.json" \
+    --slurpfile tags "$TMP/tags.json" \
+    --slurpfile merge_requests "$TMP/merge_requests.json" \
+    '$meta[0] as $meta
+     | $open_issues[0] as $open_issues
+     | $closed_issues[0] as $closed_issues
+     | $labels[0] as $labels
+     | $branches[0] as $branches
+     | $tags[0] as $tags
+     | $merge_requests[0] as $merge_requests
+     | ($meta.open_issues_count // 0) as $total
      | {
         project: $project,
         path: $path,

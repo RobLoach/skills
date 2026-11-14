@@ -88,9 +88,15 @@ PAYLOAD=$(jq -n \
         } + (if $old_line == "" then {} else {old_line: ($old_line | tonumber)} end))
     }')
 
+# glab's stderr is kept apart from the response: a warning it prints on success would
+# otherwise make the JSON unparseable, and the post would read as failed and be retried
+# into a duplicate thread. It is only worth showing when the post did fail.
+ERR=$(mktemp)
+trap 'rm -f "$ERR"' EXIT
 if ! RESPONSE=$(printf '%s' "$PAYLOAD" | api --method POST \
     -H "Content-Type: application/json" --input - \
-    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/discussions" 2>&1); then
+    "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/discussions" 2>"$ERR"); then
+    cat "$ERR" >&2
     printf '%s\n' "$RESPONSE" >&2
     echo "GitLab rejected the inline position for $PATH_NEW:$LINE_NEW" >&2
     exit 1

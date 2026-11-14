@@ -11,7 +11,8 @@
 # <project> is the project's machine name - "ai_ckeditor", not "project/ai_ckeditor".
 #
 # Two repositories are involved, and they are not the same remote: the work targets
-# <namespace>/<project> (`upstream`) while the branch lives on the issue fork (`fork`).
+# <namespace>/<project> (`upstream`) while the branch lives on the issue fork
+# (`fork-<mode>-<iid>`, e.g. `fork-mr-23`).
 # API calls go to git.drupalcode.org and git operations go to git.drupal.org - two names
 # for one service, not interchangeable - so both URLs come from the API's own
 # ssh_url_to_repo rather than being composed here.
@@ -29,15 +30,20 @@
 # The worktree is recreated on every run. Finished work is always pushed, so the fork
 # branch is the source of truth and leftovers from an interrupted run are simply redone.
 #
-# Only the path goes to stdout; `fork_branch=`, `target_branch=` and `resumed=` go to
-# stderr with git's own output.
+# The fork remote is named per merge request or issue rather than plain `fork`: remotes
+# live in the base clone's config, which every worktree of the project shares, so one
+# shared name would be re-pointed by a run on another merge request (whose source may be
+# another fork) and a push would land on the wrong one.
+#
+# Only the path goes to stdout; `remote=`, `fork_branch=`, `target_branch=` and
+# `resumed=` go to stderr with git's own output.
 #
 # Exit codes:
 #   0  Ready. stdout is the worktree path; cd into it.
 #   3  The rebase onto the target branch conflicted. It has been aborted and the
 #      worktree left in place; park rather than working here.
-#   4  The branch is checked out by another, still-live worktree. Remove that one
-#      (`git worktree remove <path> --force`) and run this again.
+#   4  The branch is checked out by another, still-live worktree, named on stderr. It
+#      may hold somebody's uncommitted work, so this never removes it.
 #   Any other non-zero: the project, merge request or fork could not be read, or the
 #   command named in stderr failed; report it.
 
@@ -59,6 +65,7 @@ MODE=$2
 IID=$3
 
 BRANCH=$MODE-$IID
+FORK_REMOTE=fork-$BRANCH
 BASE=${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/$PROJECT
 WT=$BASE.worktrees/$BRANCH
 
@@ -101,7 +108,7 @@ cd "$BASE"
 # Add `upstream` beside it rather than renaming, so the user's own remote keeps working.
 remote() { git remote set-url "$1" "$2" 2>/dev/null || git remote add "$1" "$2"; }
 remote upstream "$UPSTREAM_URL"
-remote fork "$FORK_URL"
+remote "$FORK_REMOTE" "$FORK_URL"
 
 # A shallow clone has no merge base, so the rebase below would replay the target
 # branch's entire history (one did: 1,355 commits) instead of the branch's own.
@@ -110,7 +117,7 @@ if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
 else
     git fetch --prune upstream
 fi
-git fetch --prune fork
+git fetch --prune "$FORK_REMOTE"
 
 # A still-live worktree holding this branch has to be dealt with by the caller:
 # removing it here could discard work another run is mid-way through.
@@ -124,7 +131,7 @@ fi
 RESUMED=true
 if [ "$MODE" = issue ]; then
     FORK_BRANCH=$(git for-each-ref --sort=-committerdate --count=1 \
-        --format='%(refname:lstrip=3)' "refs/remotes/fork/$IID-*")
+        --format='%(refname:lstrip=3)' "refs/remotes/$FORK_REMOTE/$IID-*")
     if [ -z "$FORK_BRANCH" ]; then
         FORK_BRANCH="$IID-issue-branch"
         RESUMED=false
@@ -143,7 +150,7 @@ git branch -D "$BRANCH" >/dev/null 2>&1 || true
 # Starting from the target branch is already up to date, so only a resumed branch has
 # anything to rebase - and only a resumed branch can conflict.
 if [ "$RESUMED" = true ]; then
-    git worktree add -b "$BRANCH" "$WT" "fork/$FORK_BRANCH"
+    git worktree add -b "$BRANCH" "$WT" "$FORK_REMOTE/$FORK_BRANCH"
     cd "$WT"
     if ! git rebase "upstream/$TARGET_BRANCH"; then
         git rebase --abort 2>/dev/null || true
@@ -158,6 +165,7 @@ fi
 git submodule sync --recursive
 git submodule update --init --recursive
 
+echo "remote=$FORK_REMOTE"
 echo "fork_branch=$FORK_BRANCH"
 echo "target_branch=$TARGET_BRANCH"
 echo "resumed=$RESUMED"

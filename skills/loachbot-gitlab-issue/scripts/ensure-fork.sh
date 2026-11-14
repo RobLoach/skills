@@ -20,6 +20,13 @@
 # Both are asynchronous. Observed latency is a few seconds, but it is a queue rather
 # than a request/response, so this polls instead of assuming.
 #
+# A fork that exists is not yet a fork that is ready. GitLab copies the repository in
+# the background, and /do:fork pushes <issue-iid>-issue-branch only after that, so a
+# worktree set up in between fetches no such branch. The first `--force-with-lease`
+# push then has no tracking ref to lease against and is rejected as stale once the
+# branch lands. So a fork this run created is waited on until its import has finished
+# and that branch exists.
+#
 # Posting /do:fork at an issue that already has one is the one way this script could
 # make a mess that a human has to look at, so a 404 is confirmed by a second read before
 # anything is written. One dropped connection should not produce a comment.
@@ -36,9 +43,10 @@
 #
 # Exit codes:
 #   0  The fork exists and you have push access. JSON on stdout.
-#   5  The project or its issue could not be read; nothing was posted.
-#   6  /do:fork or /do:access was posted but drupalbot did not act within the wait.
-#      Report it with the issue URL - the comment is public, so do not post it again.
+#   5  The project, its issue or its existing fork could not be read; nothing was posted.
+#   6  /do:fork or /do:access was posted but drupalbot did not act within the wait, or
+#      the fork it created never finished importing. Report it with the issue URL - the
+#      comment is public, so do not post it again.
 
 set -euo pipefail
 
@@ -114,7 +122,34 @@ if [ -z "$FORK_ID" ]; then
     exit 6
 fi
 
-if ! FORK_SSH_URL=$(api "projects/$FORK_ID" 2>/dev/null | jq -r '.ssh_url_to_repo // empty') ||
+# "none" is what a project that was never imported reports, which is the steady state
+# of a fork whose copy finished long ago.
+fork_ready() {
+    local json=''
+    json=$(api "projects/$FORK_ID" 2>/dev/null) || json=''
+    FORK_SSH_URL=$(printf '%s' "${json:-null}" | jq -r '
+        if type == "object" and ((.import_status // "none") | IN("finished", "none"))
+        then (.ssh_url_to_repo // empty) else empty end')
+    [ -n "$FORK_SSH_URL" ] &&
+        api "projects/$FORK_ID/repository/branches/$IID-issue-branch" >/dev/null 2>&1
+}
+
+FORK_SSH_URL=
+if [ "$CREATED" = true ]; then
+    READY=false
+    for _ in $(seq 1 "$MAX_POLLS"); do
+        if fork_ready; then
+            READY=true
+            break
+        fi
+        echo "waiting for $FORK_PATH to finish importing" >&2
+        sleep "$POLL_SECONDS"
+    done
+    if [ "$READY" != true ]; then
+        echo "$FORK_PATH exists but never finished importing $IID-issue-branch" >&2
+        exit 6
+    fi
+elif ! FORK_SSH_URL=$(api "projects/$FORK_ID" 2>/dev/null | jq -r '.ssh_url_to_repo // empty') ||
     [ -z "$FORK_SSH_URL" ]; then
     echo "cannot read $FORK_PATH (project $FORK_ID) on $HOST" >&2
     exit 5

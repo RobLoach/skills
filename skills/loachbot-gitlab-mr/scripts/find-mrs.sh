@@ -31,8 +31,13 @@ HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 # drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 SCOPE=$NAMESPACE/
+# A named project is asked directly rather than filtered out of the global search: that
+# search returns your merge requests from every project, and one busy elsewhere would
+# push this project's off the page.
+ENDPOINT="merge_requests?scope=all&"
 if [ "$#" -eq 1 ]; then
     SCOPE="$NAMESPACE/$1!"
+    ENDPOINT="projects/$NAMESPACE%2F$1/merge_requests?"
 fi
 
 api() { glab api --hostname "$HOST" "$@"; }
@@ -42,8 +47,9 @@ if ! MY_ID=$(api user 2>/dev/null | jq -r '.id // empty') || [ -z "$MY_ID" ]; th
     exit 5
 fi
 
-LIST=$(api "merge_requests?author_id=$MY_ID&state=opened&scope=all&order_by=updated_at&sort=desc&per_page=30" \
-    2>/dev/null) || LIST=''
+# --paginate prints one array per page; slurp them into one.
+LIST=$(api --paginate "${ENDPOINT}author_id=$MY_ID&state=opened&order_by=updated_at&sort=desc&per_page=100" \
+    2>/dev/null | jq -sc 'add') || LIST=''
 if [ "$(printf '%s' "${LIST:-null}" | jq -r 'type')" != "array" ]; then
     echo "cannot search merge requests on $HOST" >&2
     exit 5

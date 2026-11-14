@@ -55,11 +55,13 @@
 # a hang.
 #
 # Exit codes:
-#   0  Every job passed, or the project has no CI at all.
+#   0  Every job passed, or the project has no CI at all - which is only believed when
+#      no [head-sha] was given, or that commit carries no CI configuration.
 #   1  New failures, listed under `new:`: this branch's to fix, forgiven or not.
 #   2  Only failures the target branch already has. Report them; never work around them.
 #   7  The pipeline or its jobs could not be read. Unknown is not passing: report it.
-#   8  Still running when the time ran out, or no pipeline for [head-sha] appeared yet.
+#   8  Still running when the time ran out, or no pipeline for [head-sha] appeared yet
+#      though the project has CI.
 #      Run it again; report the pending jobs only once repeats stop helping.
 
 set -euo pipefail
@@ -102,6 +104,22 @@ pipeline_matches_head() {
     printf '%s\n' "$PARENTS" | grep -qx "$HEAD_SHA"
 }
 
+# Does the commit just pushed configure CI? Asked only when [head-sha] was given, since
+# that is the case where a missing pipeline is one still coming rather than one that
+# never will - drupal.org's pipeline creation can lag a push by minutes under load. The
+# checkout this runs from is the one that was pushed; a project-level ci_config_path
+# covers CI configured outside the repository.
+has_ci() {
+    [ -n "$HEAD_SHA" ] || return 1
+    git cat-file -e "$HEAD_SHA:.gitlab-ci.yml" 2>/dev/null && return 0
+    [ -n "$(api "projects/$NAMESPACE%2F$PROJECT" 2>/dev/null |
+        jq -r '.ci_config_path // empty')" ]
+}
+HAS_CI=false
+if has_ci; then
+    HAS_CI=true
+fi
+
 # A pipeline takes a moment to attach after a push.
 sleep "$SETTLE_SECONDS"
 
@@ -130,7 +148,9 @@ while :; do
         break
     fi
     # Nothing attached at all after the probes: an unreadable merge request, or no CI.
-    if [ -z "$PIPELINE_ID" ] && [ "$POLL" -ge "$NO_PIPELINE_PROBES" ]; then
+    # A commit that configures CI keeps waiting instead, up to the timeout.
+    if [ -z "$PIPELINE_ID" ] && [ "$POLL" -ge "$NO_PIPELINE_PROBES" ] &&
+        { [ -z "$MR_IID" ] || [ "$HAS_CI" != true ]; }; then
         break
     fi
     out_of_time && break
@@ -141,6 +161,11 @@ done
 if [ -z "$MR_IID" ]; then
     echo "cannot read merge request !$IID in $NAMESPACE/$PROJECT on $HOST" >&2
     exit 7
+fi
+
+if [ -z "$PIPELINE_ID" ] && [ "$HAS_CI" = true ]; then
+    echo "no pipeline attached to !$IID for $HEAD_SHA after ${SECONDS}s, though it configures CI" >&2
+    exit 8
 fi
 
 if [ -z "$PIPELINE_ID" ]; then

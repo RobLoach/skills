@@ -11,6 +11,7 @@
 #
 # Exit codes:
 #   0  Both took effect. The assignees and labels are printed.
+#   5  The authenticated user could not be read, so nothing can be confirmed.
 #   6  Not both within the wait. The current assignees and labels are on stderr. Do not
 #      post the comment again: a duplicated handback in the thread is worse than a label
 #      somebody sets by hand.
@@ -35,7 +36,12 @@ MAX_POLLS=${LOACHBOT_CLAIM_MAX_POLLS:-24}
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-ME=$(api user 2>/dev/null | jq -r '.username // empty') || ME=''
+# Without a username every issue reads as "not assigned to you", and the handback
+# would confirm without drupalbot having done a thing.
+if ! ME=$(api user 2>/dev/null | jq -r '.username // empty') || [ -z "$ME" ]; then
+    echo "cannot read the authenticated user from $HOST" >&2
+    exit 5
+fi
 
 STATE=''
 for _ in $(seq 1 "$MAX_POLLS"); do

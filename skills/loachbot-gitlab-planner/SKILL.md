@@ -13,7 +13,7 @@ metadata:
 
 - `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
 - `jq` on `PATH`; the scripts parse JSON with it.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab; the commands written out here assume `git.drupalcode.org`.
 <!-- /SHARED: gitlab-prerequisites -->
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH`, needed only for projects whose queue never moved to GitLab, such as Drupal core (see Step 3); reads need no login.
 - SSH access to `git.drupal.org`, used by the clone in Step 2.
@@ -90,7 +90,7 @@ Act on its exit code:
 - **6** → the project could not be read. Check the machine name and namespace (a sandbox needs `LOACHBOT_GITLAB_NAMESPACE=sandbox`), then report it and stop.
 - Any other non-zero → report the failing git command from stderr and stop.
 
-When the run ends, `git -C ~/Projects/drupalcode/<project> worktree remove --force "$WT"`.
+When the run ends, `git -C "$WT" worktree remove --force "$WT"` (git runs it from the base clone).
 
 ### 3. Read the queue, the releases and the labels
 

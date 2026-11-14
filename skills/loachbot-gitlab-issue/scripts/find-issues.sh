@@ -42,8 +42,13 @@ HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 # drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 SCOPE=$NAMESPACE/
+# A named project is asked directly rather than filtered out of the global search: that
+# search returns your issues from every project, and one busy elsewhere would push this
+# project's off the page.
+ENDPOINT="issues?scope=all&"
 if [ "$#" -eq 1 ]; then
     SCOPE="$NAMESPACE/$1#"
+    ENDPOINT="projects/$NAMESPACE%2F$1/issues?"
 fi
 
 api() { glab api --hostname "$HOST" "$@"; }
@@ -56,8 +61,9 @@ if [ -z "$ME" ] || [ -z "$MY_ID" ]; then
     exit 5
 fi
 
-ISSUES=$(api "issues?author_id=$MY_ID&state=opened&scope=all&order_by=updated_at&sort=desc&per_page=50" \
-    2>/dev/null) || ISSUES=''
+# --paginate prints one array per page; slurp them into one.
+ISSUES=$(api --paginate "${ENDPOINT}author_id=$MY_ID&state=opened&order_by=updated_at&sort=desc&per_page=100" \
+    2>/dev/null | jq -sc 'add') || ISSUES=''
 if [ "$(printf '%s' "${ISSUES:-null}" | jq -r 'type')" != "array" ]; then
     echo "cannot search issues on $HOST" >&2
     exit 5

@@ -13,11 +13,12 @@ metadata:
 
 - `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
 - `jq` on `PATH`; the scripts parse JSON with it.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab; the commands written out here assume `git.drupalcode.org`.
 <!-- /SHARED: gitlab-prerequisites -->
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` for projects whose issues never moved to GitLab, such as Drupal core; reads need no login. Without it, those issues cannot be read.
+- For Step 8 only: SSH access to `git.drupal.org` for pushes, and clones and worktrees in `~/Projects` (created if missing; `LOACHBOT_PROJECTS_DIR` overrides it).
 
-Unless asked to apply its findings (Step 8), this skill never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request.
+The review is read-only unless Step 8 is requested: it never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request. Step 8 does take a worktree in the shared clone, and so follows the one-run-per-clone rule.
 
 <!-- SHARED: gitlab-conventions -->
 ## Conventions
@@ -260,18 +261,35 @@ When nothing blocks, **stop**. Do not set `state::rtbc`, approve or merge: say n
 
 ### 8. Fix it, when asked
 
-Only when the user asks to apply findings to the merge request. This leaves the read-only review, under `loachbot-gitlab-mr`'s rules: `--force-with-lease` to `fork`, then its Step 4 (`wait-for-pipeline.sh`) until every job is green. Take a worktree on the fork's branch, rebased:
+Only when the user asks to apply findings to the merge request. This leaves the read-only review, under `loachbot-gitlab-mr`'s rules. Take a worktree on the fork's branch, rebased:
 
 ```bash
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
 cd "$WT"
 ```
 
+Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork.
+
 - **3** → the rebase conflicted and was aborted. Leave it to `loachbot-gitlab-mr`; report it and stop.
-- **4** → another live worktree has the branch. Run `git worktree remove <stale-path> --force`, then `git worktree prune`, and rerun.
+- **4** → another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero → stderr names what failed. Report it and stop.
 
-Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents). One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`.
+Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents). One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`. Then push and wait for every job, forgiven ones included:
+
+```bash
+git push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
+bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
+```
+
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison.
+
+- **0** → every job passed, or the commit configures no CI. Continue.
+- **1** → `new:` lists what the fixes broke. Fix it and push again; after two attempts, report the failing jobs and stop without resolving threads.
+- **2** → only failures the target branch already has. Fix nothing; name them in the report.
+- **7** → the pipeline could not be read. Report it with the URL and stop.
+- **8** → still running, or no pipeline has appeared yet. Run it again; after three runs, report the pending jobs and stop.
+
+Read a failing job's log with Step 5's `job-log.sh`, from the pipeline project the wait prints.
 
 Once pushed and green, reply on and resolve each fixed finding's thread, passing the commit that fixed it:
 
@@ -283,10 +301,22 @@ bash <this skill's directory>/scripts/resolve-threads.sh <project> <iid> <commit
 - **1** → the threads named on stderr were not resolved; resolving needs the author or a maintainer. Report them.
 - **5** → the merge request could not be read. Report it.
 
+Then remove the worktree, its local branch and its remote; the work is pushed:
+
+```bash
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
+git worktree remove "$WT" --force
+git branch -D mr-<iid>
+git remote remove fork-mr-<iid>
+```
+
 ## Rules
 
 - Review exactly one merge request per run; for more, see [Repeated runs](#repeated-runs).
-- Read-only against git: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run. The one exception is Step 8, on request, under `loachbot-gitlab-mr`'s rules.
+- Read-only against git unless Step 8 is requested: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run. Step 8, on request, works under `loachbot-gitlab-mr`'s rules: push only to `fork-mr-<iid>`, with `--force-with-lease`, and never merge.
+<!-- SHARED: one-run-per-clone -->
+- One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
+<!-- /SHARED: one-run-per-clone -->
 - Never approve, set `state::rtbc` or merge. The most this skill sets is `state::needsWork`, and only when a finding genuinely blocks.
 - Post inline comments only on lines the diff touches, and one summary note per run; nothing in report-here-only mode. Reply in an existing thread rather than re-posting its finding (Steps 2 and 6).
 - Separate blocking findings from suggestions, every time.

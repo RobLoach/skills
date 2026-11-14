@@ -55,8 +55,12 @@ fi
 # Taken in two steps so the type check below is what reports an unreadable issue:
 # `glab api` exits non-zero on a 404, and under `set -e` that would end the run here
 # with no explanation of which read failed.
+#
+# --paginate prints one array per page, 20 notes to a page by default, so slurp them
+# into one: a busy thread would otherwise read as unparseable and be skipped as unreadable.
 NOTES=$(api --paginate \
-    "projects/$NAMESPACE%2F$PROJECT/issues/$IID/notes?sort=asc&order_by=created_at" 2>/dev/null) ||
+    "projects/$NAMESPACE%2F$PROJECT/issues/$IID/notes?sort=asc&order_by=created_at&per_page=100" \
+    2>/dev/null | jq -sc 'add') ||
     NOTES=''
 
 if [ "$(printf '%s' "${NOTES:-null}" | jq -r 'type')" != "array" ]; then

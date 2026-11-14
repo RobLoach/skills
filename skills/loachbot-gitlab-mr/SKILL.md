@@ -13,7 +13,7 @@ metadata:
 
 - `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
 - `jq` on `PATH`; the scripts parse JSON with it.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab; the commands written out here assume `git.drupalcode.org`.
 <!-- /SHARED: gitlab-prerequisites -->
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` for projects whose issues never moved to GitLab, Drupal core among them; reads need no login. Without it, the issue behind those merge requests cannot be read.
 - SSH access to `git.drupal.org`, for pushes to issue forks.
@@ -172,10 +172,10 @@ WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
 cd "$WT"
 ```
 
-Act on its exit code:
+Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. Act on its exit code:
 
 - **3** → the rebase conflicted and was aborted. Resolve it only if the conflict is mechanical and you can say exactly why your resolution is right; conflicting logic you did not write is a Step 5 park. Never keep working in a half-rebased worktree.
-- **4** → another live worktree has the branch. Run `git worktree remove <stale-path> --force`, then `git worktree prune`, and rerun the script.
+- **4** → another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero → stderr names what failed. Report it and stop.
 
 To resolve a conflict by hand:
@@ -191,19 +191,19 @@ GIT_EDITOR=true git rebase --continue
 Push, then verify per job:
 
 ```bash
-git push --force-with-lease fork "HEAD:<source-branch>"
+git push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
 ```
 
-Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter limit kills it before it can exit with a code.
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
-- **0** → every job passed. Continue.
+- **0** → every job passed, or the commit configures no CI. Continue.
 - **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5. `+` lines are a log diff with numbers masked: a lead, not a verdict.
 - **2** → every failure also fails on the target branch. Fix nothing; name them as pre-existing in the handback.
 - **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
-- **8** → still running when the ~9-minute call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back; a later run picks it up.
+- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back; a later run picks it up.
 
 The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
 
@@ -272,9 +272,10 @@ EOF
 Remove the worktree and its local branch; the work is pushed:
 
 ```bash
-cd ~/Projects/drupalcode/<project>
-git worktree remove ~/Projects/drupalcode/<project>.worktrees/mr-<iid> --force
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
+git worktree remove "$WT" --force
 git branch -D mr-<iid>
+git remote remove fork-mr-<iid>
 ```
 
 Report the URL:
@@ -287,8 +288,8 @@ For "a new merge request doing what !\<iid\> does, but targeting \<branch\>", or
 
 ```bash
 bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid> >/dev/null || [ $? -eq 3 ] || exit
-cd ~/Projects/drupalcode/<project>
-WT=~/Projects/drupalcode/<project>.worktrees/port-<iid>-<branch>
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
+WT="$PWD.worktrees/port-<iid>-<branch>"
 git worktree add -b port-<iid>-<branch> "$WT" upstream/<branch>
 cd "$WT"
 git cherry-pick -x <oldest-sha>^..<newest-sha>
@@ -297,7 +298,7 @@ git cherry-pick -x <oldest-sha>^..<newest-sha>
 Resolve conflicts by Step 3's rule: mechanical only, else ask per Step 5. Then push and open the merge request **on the fork** (`$SOURCE_ID` from Step 1), targeting the project:
 
 ```bash
-git push -u fork "HEAD:<issue-id>-<branch>"
+git push -u fork-mr-<iid> "HEAD:<issue-id>-<branch>"
 printf 'Port of !%s to %s.\n\nAI-Generated: Yes\n' <iid> <branch> > <tmp>/mr-description.md
 glab api --hostname git.drupalcode.org -X POST "projects/$SOURCE_ID/merge_requests" \
     -f "source_branch=<issue-id>-<branch>" -f "target_branch=<branch>" \
@@ -305,14 +306,14 @@ glab api --hostname git.drupalcode.org -X POST "projects/$SOURCE_ID/merge_reques
     -f "title=<original title> (<branch>)" -F "description=@<tmp>/mr-description.md" | jq -r '.web_url'
 ```
 
-Then Steps 4 and 6 on the new merge request.
+Then Steps 4 and 6 on the new merge request, still pushing to `fork-mr-<iid>`: the original's remote, on the same fork.
 
 For a big forward-port, first triage the candidate commits (already on the target, applies cleanly, needs adapting, not applicable) in parallel read-only [sub-agents](#sub-agents), one per slice, then cherry-pick only what they cleared.
 
 ## Rules
 
 - One merge request per run; for more, see [Repeated runs](#repeated-runs). Within a run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration, git, push and handback.
-- Push to `fork`, never `upstream`. `--force-with-lease` is the only acceptable force.
+- Push to the merge request's `fork-mr-<iid>` remote, never `upstream`. `--force-with-lease` is the only acceptable force.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

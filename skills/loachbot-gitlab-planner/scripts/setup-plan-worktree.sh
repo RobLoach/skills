@@ -40,7 +40,9 @@ if [ ! -d "$BASE/.git" ]; then
     git clone --origin upstream "$URL" "$BASE" >&2
 fi
 cd "$BASE"
-git remote | grep -qx upstream || git remote add upstream "$URL"
+# Set rather than only added: a clone made by hand may carry an `upstream` pointing at
+# an HTTPS URL or a mirror, and fetching that would plan against the wrong history.
+git remote set-url upstream "$URL" 2>/dev/null || git remote add upstream "$URL"
 git fetch --prune upstream >&2
 
 git worktree remove --force "$WT" >/dev/null 2>&1 || rm -rf "$WT"

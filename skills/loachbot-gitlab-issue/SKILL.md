@@ -13,7 +13,7 @@ metadata:
 
 - `glab auth status --hostname git.drupalcode.org` succeeds; if not, report it and stop (`glab auth login --hostname git.drupalcode.org` fixes it).
 - `jq` on `PATH`; the scripts parse JSON with it.
-- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes, and `LOACHBOT_GITLAB_HOST` for another GitLab.
+- Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab; the commands written out here assume `git.drupalcode.org`.
 <!-- /SHARED: gitlab-prerequisites -->
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` is optional: it only makes a named issue from a queue that never moved to GitLab (Drupal core among them) report as the wrong kind of project rather than unreadable. This skill cannot work on those either way.
 - Issue forks are always under `issue/`.
@@ -202,8 +202,8 @@ jq -r '"\(.fork_path) id=\(.fork_id) created=\(.created) access_via=\(.access_vi
 Act on its exit code:
 
 - **0** → fork exists and is writable. Continue.
-- **6** → drupalbot never acted. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
-- **5** → the project or the issue could not be read. Report it and stop.
+- **6** → drupalbot never acted, or the fork it made never finished importing. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
+- **5** → the project, the issue or its fork could not be read; nothing was posted. Report it and stop.
 
 Then take a worktree at `~/Projects/drupalcode/<project>.worktrees/issue-<issue-iid>`:
 
@@ -212,10 +212,10 @@ WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> issue <is
 cd "$WT"
 ```
 
-Its stderr ends with `fork_branch=`, `target_branch=` and `resumed=` for Step 6. Act on its exit code:
+Its stderr ends with `remote=fork-issue-<issue-iid>`, `fork_branch=`, `target_branch=` and `resumed=` for Step 6. Act on its exit code:
 
-- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify. Never work in a half-rebased worktree.
-- **4** — another live worktree has the branch. Remove it (`git worktree remove <stale-path> --force`, then `git worktree prune`) and rerun.
+- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; anything else is a Step 8 park. Never work in a half-rebased worktree.
+- **4** — another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero — stderr names what failed. Report it and stop; do not force through it.
 
 `resumed=true` means work already exists: read it (`git log upstream/<target-branch>..HEAD`) and build on it.
@@ -240,7 +240,7 @@ Keep the diff to what the issue asked; mention broader cleanups to the user inst
 ### 6. Open the merge request
 
 ```bash
-git push --force-with-lease -u fork "HEAD:<fork-branch>"
+git push --force-with-lease -u fork-issue-<issue-iid> "HEAD:<fork-branch>"
 ```
 
 Write the description to a file (the shell mangles markdown):
@@ -284,15 +284,15 @@ Not a draft: reviewers go by the issue's `state::` label, and nobody reviews a d
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> "$MR_IID" "$(git rev-parse HEAD)"
 ```
 
-Run it with a 600000 ms tool timeout: it waits up to ~9 minutes, and a shorter limit kills it before it can exit with a code.
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
-- **0** → every job passed, or no CI. Continue.
+- **0** → every job passed, or the commit configures no CI. Continue.
 - **1** → `new:` lists what this branch introduced, forgiven or not. **Fix all of it.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8. `+` lines are a log diff with numbers masked: a lead, not a verdict.
 - **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them in the handback instead of "The pipeline is green."
 - **7** → pipeline unreadable. Unknown is not passing: report it with the merge request URL and stop.
-- **8** → still running when the ~9-minute call ended. Run it again; after three runs, report pending jobs and the URL and stop without handing back.
+- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report pending jobs and the URL and stop without handing back.
 
 The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
 
@@ -358,13 +358,15 @@ bash <this skill's directory>/scripts/confirm-handback.sh <project> <issue-iid>
 
 - **0** → unassigned and at `state::needsReview`. Continue.
 - **6** → not both within the wait. Tell the user and point at the issue; do **not** post again.
+- **5** → your own user could not be read, so nothing was confirmed. Tell the user to check the issue by hand; do **not** post again.
 
 Remove the worktree and local branch:
 
 ```bash
-cd ~/Projects/drupalcode/<project>
-git worktree remove ~/Projects/drupalcode/<project>.worktrees/issue-<issue-iid> --force
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
+git worktree remove "$WT" --force
 git branch -D issue-<issue-iid>
+git remote remove fork-issue-<issue-iid>
 ```
 
 ### 10. Tell the user what is left
@@ -389,7 +391,7 @@ List only what is outstanding; only the first two appear every run.
 - One issue per run; for more, see [Repeated runs](#repeated-runs).
 - Only claim issues you reported, unless the user names one.
 - Finish what is already claimed before claiming more: a `resume` outranks a `ready`.
-- Push to the `fork` remote, never to `upstream`, and never with a force other than `--force-with-lease`.
+- Push to the issue's `fork-issue-<issue-iid>` remote, never to `upstream`, and never with a force other than `--force-with-lease`.
 - Never rewrite or revert another contributor's commits; a conflict with their work is a Step 8 park.
 - All git operations run in the issue's worktree, never the base clone.
 - Post only: the claim, the un-park, the scripts' fork and access commands, one parking question, one handback.
