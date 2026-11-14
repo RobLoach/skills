@@ -183,7 +183,7 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUM
 
 - **0** → passed, or no CI. Continue.
 - **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning; a later run picks it up.
-- **1** → a check failed. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, [park](#parking) it.
+- **1** → a check failed or was cancelled. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, [park](#parking) it.
 
 ### 4. When the task is unclear
 
@@ -195,8 +195,8 @@ Un-assign silently, then remove the worktree and its already-pushed local branch
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee @me
-cd ~/Projects/<owner>/<repo>
-git worktree remove ~/Projects/<owner>/<repo>.worktrees/issue-<number> --force
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
+git worktree remove "$WT" --force
 git branch -D fix/issue-<number>
 ```
 

@@ -122,7 +122,7 @@ cd "$WT"
 
 - **4** → another worktree (named on stderr) has the PR branch checked out, possibly the user's own. Report it and stop; never remove it or force-switch branches across worktrees.
 - **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the requested changes do not touch that submodule, continue without it. Otherwise [park](#parking) the PR, naming the submodule.
-- Any other non-zero → checkout failed (e.g. the local branch diverged). Stop and report; do not force through.
+- Any other non-zero → checkout failed (stderr names the command). Stop and report; do not force through.
 
 ### 3. Understand the Pull Request
 
@@ -160,7 +160,7 @@ fi
 
 A comment asking to fix conflicts means rebase, never merge: `git fetch origin`, `git rebase origin/<base>` where `<base>` is `gh pr view <number> --json baseRefName --jq .baseRefName`, then `git push --force-with-lease` (a plain push is refused after a rebase). Regenerate conflicting generated or built files with the project's build rather than hand-merging them. If a conflict needs judgment, `git rebase --abort` and leave the comment unreacted.
 
-A comment asking for a change in another repository (e.g. an upstream library) gets its own PR there. Work in a new worktree off that repo's base clone `~/Projects/<other-owner>/<other-repo>` (cloned if missing); never in a local clone with uncommitted work. Open the PR, link it in a reply to the comment, react 🚀 and remove that worktree; do not wait on its CI.
+A comment asking for a change in another repository (e.g. an upstream library) gets its own PR there. Work in a new worktree off that repo's base clone `<other-owner>/<other-repo>` under the projects directory (cloned if missing); never in a local clone with uncommitted work. Open the PR, link it in a reply to the comment, react 🚀 and remove that worktree; do not wait on its CI.
 
 React 🚀 to each comment only once handled: the change was pushed, or you verified none is needed. Step 3 relies on this marker, so never react earlier:
 
@@ -188,15 +188,15 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 
 - **0** → passed, or no CI. Continue to Step 6.
 - **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without marking ready; a later run picks it up.
-- **1** → a check failed. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, [park](#parking) the PR, naming the failing checks.
+- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, [park](#parking) the PR, naming the failing checks.
 
 ### 6. Mark the Pull Request as ready
 
 ```bash
 gh pr ready <number> --repo <owner>/<repo>
 BRANCH=$(git rev-parse --abbrev-ref HEAD)   # capture while still inside the worktree
-cd ~/Projects/<owner>/<repo>
-git worktree remove ~/Projects/<owner>/<repo>.worktrees/pr-<number> --force
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
+git worktree remove "$WT" --force
 git branch -D "$BRANCH"
 ```
 
@@ -208,7 +208,7 @@ List the `html_url` of any comment left unreacted (Step 4) under the Done line; 
 ## Rules
 
 - One Pull Request per run; for more, see [Repeated runs](#repeated-runs).
-- Never post comments except the single [parking](#parking) question and a reply linking a PR opened in another repository (Step 4); otherwise only react and rename.
+- Never post comments except the single [parking](#parking) question and a reply linking a PR opened in another repository (Step 4); otherwise only react, rename, and update the PR title or body to match the work (Step 4).
 - Run all git operations for a PR inside its worktree; never `git checkout`, `gh pr checkout` or commit in the base clone, which stays on the default branch.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.

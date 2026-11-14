@@ -53,18 +53,20 @@ fi
 
 # <kind> <list endpoint> <reaction endpoint prefix>
 fetch_comments() {
-    local kind=$1 list=$2 prefix=$3 lines id rockets json mine handled
-    # Tab-separated id and 🚀 count ahead of the JSON, so each line costs one jq call.
+    local kind=$1 list=$2 prefix=$3 lines id rockets json mine
+    export KIND=$kind
+    # The id and 🚀 count lead each line, tab-separated, so the shell can pick out the
+    # comments worth a reaction lookup without a separate JSON parser.
     if ! lines=$(gh api --paginate "$list" \
         --jq '.[] | select(.user.login == env.AUTHOR)
-              | "\(.id)\t\(.reactions.rocket // 0)\t\({id, created_at, html_url, path, body} | tojson)"' \
+              | "\(.id)\t\(.reactions.rocket // 0)\t\({kind: env.KIND, id, created_at, html_url, path, body, handled: false}
+                                                    | with_entries(select(.value != null)) | tojson)"' \
         2>/dev/null); then
         echo "cannot read $list" >&2
         exit 5
     fi
     while IFS=$'\t' read -r id rockets json; do
         [ -n "$id" ] || continue
-        handled=false
         # Only comments with a 🚀 at all cost an extra read.
         if [ "$rockets" -gt 0 ]; then
             if ! mine=$(gh api --paginate "$prefix/$id/reactions?content=rocket" \
@@ -72,10 +74,11 @@ fetch_comments() {
                 echo "cannot read the reactions of $prefix/$id" >&2
                 exit 5
             fi
-            [ -z "$mine" ] || handled=true
+            # tojson escapes every quote inside a string value, so the first unescaped
+            # "handled":false can only be the key itself.
+            [ -z "$mine" ] || json=${json/'"handled":false'/'"handled":true'}
         fi
-        jq -c --arg kind "$kind" --argjson handled "$handled" \
-            '{kind: $kind} + with_entries(select(.value != null)) + {handled: $handled}' <<<"$json"
+        printf '%s\n' "$json"
     done <<<"$lines"
 }
 

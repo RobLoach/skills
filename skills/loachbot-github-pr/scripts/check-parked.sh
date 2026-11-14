@@ -10,7 +10,8 @@
 # A parking run comments first and renames second, so the parking rename is the
 # newest event it leaves behind. The most recent one wins: an item can be parked,
 # answered and re-parked any number of times. A reply is anything posted after that
-# rename; pass `pr` to count inline review comments as replies too.
+# rename; pass `pr` to count inline review comments and review summaries as replies
+# too.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
@@ -31,13 +32,22 @@ REPO=$2
 NUMBER=$3
 KIND=${4:-issue}
 
-RENAMES=''
-if ! RENAMES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/events" \
-    --jq '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at' \
-    2>/dev/null); then
-    echo "cannot read the events of $OWNER/$REPO#$NUMBER" >&2
-    exit 5
-fi
+# gh's own message (a 404, an expired token) is the useful part of a failed read, so it
+# is kept and printed rather than discarded.
+ERR=$(mktemp)
+trap 'rm -f "$ERR"' EXIT
+
+# <description> <endpoint> <jq filter>: prints the filtered result, or exits 5.
+read_api() {
+    if ! gh api --paginate "$2" --jq "$3" 2>"$ERR"; then
+        cat "$ERR" >&2
+        echo "cannot read the $1 of $OWNER/$REPO#$NUMBER" >&2
+        exit 5
+    fi
+}
+
+RENAMES=$(read_api events "repos/$OWNER/$REPO/issues/$NUMBER/events" \
+    '.[] | select(.event == "renamed" and (.rename.to | endswith("(Needs Info)"))) | .created_at')
 
 # Guard on the timestamp: every string sorts after an empty one, so an unparked
 # item would return its entire comment history below and read as a pile of replies.
@@ -48,26 +58,24 @@ if [ -z "$PARKED" ]; then
 fi
 export PARKED
 
-if ! REPLIES=$(gh api --paginate "repos/$OWNER/$REPO/issues/$NUMBER/comments" \
-    --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}' \
-    2>/dev/null); then
-    echo "cannot read the comments of $OWNER/$REPO#$NUMBER" >&2
-    exit 5
-fi
+REPLIES=$(read_api comments "repos/$OWNER/$REPO/issues/$NUMBER/comments" \
+    '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}')
 
 INLINE=
+REVIEWS=
 if [ "$KIND" = "pr" ]; then
-    if ! INLINE=$(gh api --paginate "repos/$OWNER/$REPO/pulls/$NUMBER/comments" \
-        --jq '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}' \
-        2>/dev/null); then
-        echo "cannot read the review comments of $OWNER/$REPO#$NUMBER" >&2
-        exit 5
-    fi
+    INLINE=$(read_api "review comments" "repos/$OWNER/$REPO/pulls/$NUMBER/comments" \
+        '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}')
+    # A review summary is where an answer often goes, and it is neither kind of comment.
+    # An empty body is a bare approval or the shell around inline comments counted above.
+    REVIEWS=$(read_api reviews "repos/$OWNER/$REPO/pulls/$NUMBER/reviews" \
+        '.[] | select(.submitted_at != null and .submitted_at > env.PARKED and (.body // "") != "")
+             | {author: .user.login, created_at: .submitted_at, body}')
 fi
 
-if [ -z "$REPLIES$INLINE" ]; then
+if [ -z "$REPLIES$INLINE$REVIEWS" ]; then
     echo "parked and still unanswered" >&2
     exit 6
 fi
 
-printf '%s\n' "$REPLIES" "$INLINE" | sed '/^$/d'
+printf '%s\n' "$REPLIES" "$INLINE" "$REVIEWS" | sed '/^$/d'

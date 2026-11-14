@@ -58,14 +58,14 @@ For several repos, run Steps 2-5 once per repo and present the plans together in
 
 ### 2. Get the latest code
 
-Clone into `~/Projects/<owner>/<repo>`, or reset an existing clone to the remote default branch:
+Clone into `~/Projects/<owner>/<repo>`, or check out the remote default branch in an existing clone (detached, so no local branch is moved):
 
 ```bash
 CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>)
 cd "$CLONE"
 ```
 
-If it exits **5**, the clone holds local work (uncommitted changes, or commits the remote default branch lacks). Report what the script printed and stop. Never clobber it: it may be the user's own working clone.
+If it exits **5**, the clone holds local work (uncommitted or untracked files, or commits only a detached HEAD holds). Report what the script printed and stop. Never clobber it: it may be the user's own working clone.
 
 ### 3. Get acquainted with the project
 

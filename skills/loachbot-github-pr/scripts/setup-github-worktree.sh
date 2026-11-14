@@ -17,7 +17,10 @@
 #          the default branch. The branch is bot-owned, so another worktree holding it
 #          is stale and removed.
 #   pr     `gh pr checkout`, which resolves fork remotes. The branch may be the user's
-#          own checkout, so another worktree holding it is reported, never taken.
+#          own checkout, so another worktree holding it is reported, never taken. A
+#          local branch no worktree holds is a leftover from an earlier run, and after
+#          a force-push to the PR it can no longer fast-forward, so `--force` resets it
+#          to the PR head; finished work is always pushed, so nothing is lost.
 #
 # Only the worktree path goes to stdout, so callers capture it without a pipe.
 #
@@ -58,26 +61,38 @@ fi
 cd "$BASE"
 git fetch origin --prune
 
-# A directory that outlived its registration (an interrupted run, a re-cloned base) is
-# not something `git worktree remove` will take, so delete it; prune clears the rest.
-git worktree remove "$WT" --force 2>/dev/null || rm -rf "$WT"
+# This run's own worktree from an earlier run, registered or not; prune forgets it.
+rm -rf "$WT"
 git worktree prune
 
+# <branch>: prints the path of the worktree that has it checked out, if any.
+holder() {
+    git worktree list --porcelain |
+        awk -v ref="branch refs/heads/$1" '/^worktree /{wt = substr($0, 10)} $0 == ref {print wt}'
+}
+
 if [ "$MODE" = pr ]; then
+    BRANCH=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" --json headRefName --jq '.headRefName')
+    HOLDER=$(holder "$BRANCH")
+    if [ -n "$HOLDER" ]; then
+        echo "$BRANCH is checked out by worktree $HOLDER"
+        exit 4
+    fi
     git worktree add --detach "$WT"
     cd "$WT"
-    if ! ERR=$(gh pr checkout "$NUMBER" --repo "$OWNER/$REPO" 2>&1); then
+    if ! ERR=$(gh pr checkout "$NUMBER" --repo "$OWNER/$REPO" --force 2>&1); then
         printf '%s\n' "$ERR" >&2
+        # gh names a fork's branch <owner>/<branch> when it would shadow the default
+        # branch, which the check above does not see; git still refuses to share it.
         case "$ERR" in
-            *"already exists"* | *"already checked out"* | *"already used by worktree"*) exit 4 ;;
+            *"already checked out"* | *"already used by worktree"*) exit 4 ;;
         esac
         exit 1
     fi
 else
     BRANCH="fix/issue-$NUMBER"
     DEFAULT=$(gh repo view "$OWNER/$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name')
-    HOLDER=$(git worktree list --porcelain |
-        awk -v ref="branch refs/heads/$BRANCH" '/^worktree /{wt = substr($0, 10)} $0 == ref {print wt}')
+    HOLDER=$(holder "$BRANCH")
     if [ -n "$HOLDER" ]; then
         echo "removing stale worktree $HOLDER, which held $BRANCH"
         git worktree remove "$HOLDER" --force
