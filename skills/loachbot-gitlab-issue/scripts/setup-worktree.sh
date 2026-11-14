@@ -1,42 +1,27 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Prepare a dedicated git worktree for one drupal.org merge request or issue, on its
 # fork's branch and rebased onto the target branch, and print the worktree path.
 #
 # Usage: bash scripts/setup-worktree.sh <project> mr|issue <iid>
 #
-# <project> is the project's machine name - "ai_ckeditor", not "project/ai_ckeditor".
+# API calls go to git.drupalcode.org and git to git.drupal.org - two names for one
+# service, not interchangeable - so both clone URLs come from the API's ssh_url_to_repo.
 #
-# Two repositories are involved, and they are not the same remote: the work targets
-# <namespace>/<project> (`upstream`) while the branch lives on the issue fork
-# (`fork-<mode>-<iid>`, e.g. `fork-mr-23`).
-# API calls go to git.drupalcode.org and git operations go to git.drupal.org - two names
-# for one service, not interchangeable - so both URLs come from the API's own
-# ssh_url_to_repo rather than being composed here.
+# issue: /do:fork makes <iid>-issue-branch, but contributors often push <iid>-<slug>, so
+# the most recently committed fork branch with that prefix wins. git decides that, not
+# the API: GitLab reports commit dates in the committer's offset, and comparing those as
+# strings prefers whoever is furthest west. With none, start from the default branch.
 #
-# mr:    the merge request's source branch, rebased onto its target branch.
-# issue: the fork must already exist (ensure-fork.sh). /do:fork makes
-#        <iid>-issue-branch, but contributors routinely push a descriptive <iid>-<slug>
-#        instead, so every fork branch prefixed with the issue number is a candidate and
-#        the most recently committed one wins. That is asked of git rather than the API:
-#        GitLab reports commit dates in the committer's own offset, and comparing those
-#        as strings silently prefers whoever is furthest west. With no candidate, the
-#        worktree starts from the default branch and the first push creates
-#        <iid>-issue-branch.
+# The fork remote is fork-<mode>-<iid> rather than `fork`: remotes live in the base
+# clone's config, shared by every worktree, so one name would be re-pointed by another
+# run and a push would land on the wrong fork.
 #
-# The worktree is recreated on every run. Finished work is always pushed, so the fork
-# branch is the source of truth and leftovers from an interrupted run are simply redone.
-#
-# The fork remote is named per merge request or issue rather than plain `fork`: remotes
-# live in the base clone's config, which every worktree of the project shares, so one
-# shared name would be re-pointed by a run on another merge request (whose source may be
-# another fork) and a push would land on the wrong one.
-#
-# Only the path goes to stdout; `remote=`, `fork_branch=`, `target_branch=` and
-# `resumed=` go to stderr with git's own output.
+# The worktree is recreated every run; the pushed fork branch is the source of truth.
+# Only the path goes to stdout; remote=, fork_branch=, target_branch= and resumed= go to
+# stderr.
 #
 # Exit codes:
 #   0  Ready. stdout is the worktree path; cd into it.
@@ -58,7 +43,6 @@ fi
 exec 3>&1 1>&2
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 MODE=$2
@@ -95,8 +79,6 @@ fi
 FORK_URL=$(api "$FORK" | jq -r '.ssh_url_to_repo // empty') || FORK_URL=
 [ -n "$FORK_URL" ] || die "cannot read the fork ($FORK) for $MODE $IID; for an issue, run ensure-fork.sh"
 
-# Clone on first use. `upstream` rather than `origin`, so nothing here implies the
-# fork and the project are the same remote.
 if [ ! -d "$BASE/.git" ]; then
     mkdir -p "$(dirname "$BASE")"
     git clone --origin upstream "$UPSTREAM_URL" "$BASE"
@@ -104,8 +86,7 @@ fi
 
 cd "$BASE"
 
-# A clone made by hand, or adopted by loachbot-gitlab-planner, may only have `origin`.
-# Add `upstream` beside it rather than renaming, so the user's own remote keeps working.
+# A clone made by hand may only have `origin`; add `upstream` beside it, not over it.
 remote() { git remote set-url "$1" "$2" 2>/dev/null || git remote add "$1" "$2"; }
 remote upstream "$UPSTREAM_URL"
 remote "$FORK_REMOTE" "$FORK_URL"
@@ -119,8 +100,7 @@ else
 fi
 git fetch --prune "$FORK_REMOTE"
 
-# A still-live worktree holding this branch has to be dealt with by the caller:
-# removing it here could discard work another run is mid-way through.
+# Removing a still-live worktree could discard another run's work: the caller decides.
 EXISTING=$(git worktree list --porcelain |
     awk -v b="refs/heads/$BRANCH" '/^worktree /{p=$2} /^branch /{if ($2==b) print p}')
 if [ -n "$EXISTING" ] && [ "$EXISTING" != "$WT" ] && [ -d "$EXISTING" ]; then
@@ -146,9 +126,7 @@ git worktree prune
 # May legitimately not exist on a first run.
 git branch -D "$BRANCH" >/dev/null 2>&1 || true
 
-# The local branch is disposable; the fork branch is what a merge request reads from.
-# Starting from the target branch is already up to date, so only a resumed branch has
-# anything to rebase - and only a resumed branch can conflict.
+# Only a resumed branch has anything to rebase, so only it can conflict.
 if [ "$RESUMED" = true ]; then
     git worktree add -b "$BRANCH" "$WT" "$FORK_REMOTE/$FORK_BRANCH"
     cd "$WT"

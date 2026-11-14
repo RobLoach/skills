@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Decide whether a " (Needs Info)"-parked issue or Pull Request has been answered.
 #
 # Usage: bash scripts/check-parked.sh <owner> <repo> <number> [pr]
 #
-# A parking run comments first and renames second, so the parking rename is the
-# newest event it leaves behind. The most recent one wins: an item can be parked,
-# answered and re-parked any number of times. A reply is anything posted after that
-# rename; pass `pr` to count inline review comments and review summaries as replies
-# too.
+# A parking run comments first and renames second, so a reply is anything after the
+# newest parking rename. `pr` also counts inline review comments and review summaries.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.

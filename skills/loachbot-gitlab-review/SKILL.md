@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-review
-description: Review one drupal.org merge request against the issue it claims to fix and against Drupal's own standards, post the findings as resolvable inline threads plus one summary, and set the issue to needs-work only when a finding blocks. Read-only against git unless asked to apply findings; never approves or merges. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, wants the findings applied, or asks to "run LoachBot Review", including repeated runs like "review the next three".
+description: Review one drupal.org merge request against its issue and Drupal's own standards, post findings as resolvable inline threads plus one summary, and set needs-work only when a finding blocks. Use when the user wants a review of a drupal.org merge request, asks what is wrong with one or how to improve it, wants the findings applied, or asks to "run LoachBot Review", including repeated runs like "review the next three".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-review/SKILL.md
@@ -18,8 +18,6 @@ metadata:
 - [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` for projects whose issues never moved to GitLab, such as Drupal core; reads need no login. Without it, those issues cannot be read.
 - For Step 8 only: SSH access to `git.drupal.org` for pushes, and clones and worktrees in `~/Projects` (created if missing; `LOACHBOT_PROJECTS_DIR` overrides it).
 
-The review is read-only unless Step 8 is requested: it never clones, checks out or writes to a branch. It reads through the API, so it needs no worktree and cannot collide with any other LoachBot run, even one on the same merge request. Step 8 does take a worktree in the shared clone, and so follows the one-run-per-clone rule.
-
 <!-- SHARED: gitlab-conventions -->
 ## Conventions
 
@@ -33,9 +31,9 @@ Scripts live in `scripts/` beside this file, run as `bash <this skill's director
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -46,7 +44,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: repeated-runs -->
@@ -63,18 +61,14 @@ When the user asks for several runs ("five times", "until there aren't any left"
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
 
-Four things here break GitLab habits, quietly. Know them before the first API call.
-
 - **Two hostnames, one service.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Each fails on the other's host, so take remote URLs from the API's `ssh_url_to_repo` instead of composing them.
-- **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in the per-issue fork `issue/<project>-<issue-id>`. Push to the fork.
-- **The pipeline is on the fork, except when it isn't.** GitLab runs a fork's merge request pipeline in the *parent* project when the author can push there: a maintainer's runs on the project, a contributor's on the fork. The wrong one returns a flat `404`. Read `head_pipeline.project_id` from a single-merge-request read; fall back to `source_project_id` only if it is missing.
-- **A green pipeline can hide red jobs.** Drupal.org's CI template sets `allow_failure: true` on some jobs, so they fail while the pipeline, badge and `glab ci status` report success. Which jobs varies per project: usually the lint jobs (`cspell`, `phpcs`, `phpstan`, `stylelint`), sometimes `eslint`, `composer` or even `phpunit` variants. Never match on job names: read each job's `allow_failure` and treat a forgiven failure as a failure.
+- **Two repositories per merge request**: it targets `project/<project>`, but its branch lives in the fork `issue/<project>-<issue-id>`; push to the fork.
+- **The pipeline may be on the fork or the parent project.** Use `head_pipeline.project_id` from a single-merge-request read (fall back to `source_project_id`); the wrong one returns a flat `404`.
+- **A green pipeline can hide red jobs**: never match on job names; read each job's `allow_failure` and treat a forgiven failure as a failure.
 
 ### The issue lives in one of two places
 
-A merge request's issue number is the tail of its fork path: `issue/ai_ckeditor-3615852` means `3615852`. It is a GitLab issue iid where the queue was migrated, a drupal.org node id where it wasn't (Drupal core and `eck` among them). The numbering spaces overlap, so the wrong world returns a real but unrelated issue.
-
-Never try both and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number; its header explains why:
+Never try both GitLab and drupal.org and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number:
 
 ```bash
 bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
@@ -152,7 +146,7 @@ The issue is the requirement; the merge request description is usually one line.
 jq -r '"\(.source) · \(.status)\n\n\(.title)\n\n\(.description)"' <tmp>/issue.json
 ```
 
-Scope is the most common real finding and the easiest to miss once reading code.
+Scope is the most common real finding.
 
 ### 4. Review the diff
 
@@ -238,9 +232,7 @@ Then exactly one summary note:
 glab mr note create <iid> -R git.drupalcode.org/<namespace>/<project> < <tmp>/summary.md
 ```
 
-In order: whether the change does what the issue asked, anything out of scope, blocking findings, suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly; an unordered pile reads as a rejection even when most are optional.
-
-Say plainly when the change is good. A review that only lists problems trains people to ignore it.
+In order: whether the change does what the issue asked, anything out of scope, blocking findings, suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly, and say plainly when the change is good.
 
 ### 7. Hand it back
 
@@ -313,11 +305,10 @@ git remote remove fork-mr-<iid>
 ## Rules
 
 - Review exactly one merge request per run; for more, see [Repeated runs](#repeated-runs).
-- Read-only against git unless Step 8 is requested: never clone, check out, push, rebase or merge. Everything goes through the API, which is why this may run alongside any other LoachBot run. Step 8, on request, works under `loachbot-gitlab-mr`'s rules: push only to `fork-mr-<iid>`, with `--force-with-lease`, and never merge.
+- Read-only against git unless Step 8 is requested: never clone, check out, push, rebase or merge; everything goes through the API, so it may run alongside any other LoachBot run. Step 8 takes a worktree in the shared clone under `loachbot-gitlab-mr`'s rules: push only to `fork-mr-<iid>`, with `--force-with-lease`, and never merge.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
 - Never approve, set `state::rtbc` or merge. The most this skill sets is `state::needsWork`, and only when a finding genuinely blocks.
-- Post inline comments only on lines the diff touches, and one summary note per run; nothing in report-here-only mode. Reply in an existing thread rather than re-posting its finding (Steps 2 and 6).
-- Separate blocking findings from suggestions, every time.
+- Post inline comments only on lines the diff touches, and one summary note per run; nothing in report-here-only mode.
 - Judge the change against the issue and the target branch, not how you would have written it. Style preferences `phpcs` does not enforce are not findings.

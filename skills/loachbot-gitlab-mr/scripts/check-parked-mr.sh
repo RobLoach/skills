@@ -4,20 +4,13 @@
 #
 # Usage: bash scripts/check-parked-mr.sh <project> <mr-iid>
 #
-# Same 0/5/6 contract as the GitHub skills' check-parked.sh, which speaks `gh` and so
-# cannot share this file; keep the parking logic in step by hand.
+# The GitHub skills' check-parked.sh has the same 0/5/6 contract but speaks `gh`; keep
+# the two in step by hand.
 #
-# A parking run comments first and renames second, so the parking rename is the newest
-# event it leaves behind. A reply is anything posted after that rename.
-#
-# GitLab records a rename as a system note reading "changed title from ...". The new
-# title is embedded in that note as HTML, which is not worth parsing: if the merge
-# request's *current* title ends with the suffix, then the latest title change is by
-# definition the one that parked it. A merge request can be parked, answered and
-# re-parked any number of times; the most recent rename wins.
-#
-# Inline review comments on a merge request are ordinary notes, so they count as
-# replies without asking anywhere else.
+# A parking run comments first and renames second, so a reply is anything after the
+# newest rename. GitLab embeds the new title in its rename note as HTML, which is not
+# worth parsing: if the current title carries the suffix, the latest rename parked it.
+# Inline review comments are ordinary notes, so they count as replies too.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
@@ -34,19 +27,13 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-# Taken in two steps so the type check below is what reports an unreadable merge
-# request: `glab api` exits non-zero on a 404, and under `set -e` that would end the run
-# here with no explanation of which read failed.
-#
-# --paginate prints one array per page, 20 notes to a page by default, so slurp them
-# into one: a busy thread would otherwise read as unparseable and be skipped as unreadable.
+# --paginate prints one array per page; slurp them into one.
 NOTES=$(api --paginate \
     "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/notes?sort=asc&order_by=created_at&per_page=100" \
     2>/dev/null | jq -sc 'add') ||

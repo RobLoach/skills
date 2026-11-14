@@ -8,12 +8,9 @@
 # Prints one line per merge request:
 #   <namespace>/<project>!<iid>\t<target-branch>\tpipeline=<status>\tfailing=<n>\t<title>
 #
-# `failing` counts jobs whose latest attempt failed, forgiven ones included. That is the
-# number to triage on rather than `pipeline=`: drupal.org's CI template marks jobs
-# `allow_failure: true`, so a pipeline reads `success` with those jobs red.
-#
-# The list endpoint omits head_pipeline entirely, so each merge request is read on its
-# own. One loop here costs a handful of reads; it is not worth a sub-agent per candidate.
+# Triage on `failing` (latest attempts that failed, forgiven ones included), not
+# `pipeline=`: drupal.org's `allow_failure` jobs leave a pipeline `success` with them red.
+# The list endpoint omits head_pipeline, so each merge request is read on its own.
 #
 # Exit codes:
 #   0  Merge requests printed.
@@ -28,12 +25,10 @@ if [ "$#" -gt 1 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 SCOPE=$NAMESPACE/
-# A named project is asked directly rather than filtered out of the global search: that
-# search returns your merge requests from every project, and one busy elsewhere would
-# push this project's off the page.
+# A named project is asked directly: in the global search, merge requests elsewhere
+# could push this project's off the page.
 ENDPOINT="merge_requests?scope=all&"
 if [ "$#" -eq 1 ]; then
     SCOPE="$NAMESPACE/$1!"

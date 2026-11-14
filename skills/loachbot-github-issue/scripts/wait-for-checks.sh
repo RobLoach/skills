@@ -1,30 +1,20 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Wait for a Pull Request's CI checks to settle.
 #
 # Usage: bash scripts/wait-for-checks.sh <owner> <repo> <pr-number>
 #
-# `gh pr checks` exits 1 for failed checks, for no checks at all, and for any error
-# such as a dropped connection, so its exit code cannot be the verdict. The verdict is
-# read from `--json bucket` instead, and only a fail or cancel bucket counts as failed.
-# A read that fails is unknown, not failed: it is retried until the wait runs out.
+# `gh pr checks` exits 1 for failed checks, for no checks, and for a dropped connection,
+# so the verdict comes from `--json bucket` instead; a failed read is retried, not failed.
+# A workflow not registered yet looks like no CI, so "no CI" is believed only after
+# LOACHBOT_CHECKS_EMPTY_PROBES empty rollups. Polls with `sleep` rather than GNU
+# `timeout`, absent on macOS.
 #
-# A workflow that has not registered yet looks exactly like a repository with no CI, so
-# "no CI" is believed only after LOACHBOT_CHECKS_EMPTY_PROBES consecutive empty status
-# rollups. Believing it early would mark an item done with its CI never verified, which
-# is the one outcome this script exists to prevent.
-#
-# Polls rather than using `gh pr checks --watch`, so bounding the wait needs nothing but
-# `sleep` - no GNU `timeout`, which is absent on stock macOS. LOACHBOT_CHECKS_ATTEMPTS
-# and LOACHBOT_CHECKS_INTERVAL bound it at roughly 30 minutes by default.
-#
-# A step marked `continue-on-error: true` fails without failing its job, so the checks
-# stay green and the step's own conclusion is the only place the failure shows. Unlike
-# drupal.org's template-imposed `allow_failure`, it is hand-written and usually means
-# "known to be noisy", so those steps are listed but leave the exit code alone.
+# A `continue-on-error: true` step fails without failing its job. Unlike drupal.org's
+# template-imposed `allow_failure` it is hand-written, usually meaning "known noisy", so
+# those steps are listed but leave the exit code alone.
 #
 # Exit codes:
 #   0  Checks passed, or the repository has no CI at all. Soft-failed steps, if any, are
@@ -49,8 +39,7 @@ ATTEMPTS=${LOACHBOT_CHECKS_ATTEMPTS:-30}
 INTERVAL=${LOACHBOT_CHECKS_INTERVAL:-60}
 EMPTY_PROBES=${LOACHBOT_CHECKS_EMPTY_PROBES:-3}
 
-# A non-number would otherwise surface mid-wait as a `[` error that falls through as
-# "pending", and a zero count would skip polling entirely.
+# A non-number would surface mid-wait as a `[` error read as "pending"; 0 skips polling.
 for KNOB in "LOACHBOT_CHECKS_ATTEMPTS=$ATTEMPTS" "LOACHBOT_CHECKS_EMPTY_PROBES=$EMPTY_PROBES"; do
     case "${KNOB#*=}" in
         '' | *[!0-9]* | 0 | 0*) echo "${KNOB%%=*} must be an integer >= 1" >&2; exit 64 ;;
@@ -115,8 +104,6 @@ if [ "$STATUS" -eq 8 ]; then
     fi
 fi
 
-# Steps that failed inside a job that still succeeded: `continue-on-error` swallowed
-# them. Only worth looking up once the checks have settled, and never fatal on its own.
 SOFT=
 SHA=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null)
 if [ -n "$SHA" ]; then

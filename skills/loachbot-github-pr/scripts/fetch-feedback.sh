@@ -10,11 +10,9 @@
 #   comment  your regular comments: id, created_at, html_url, body, handled
 #   inline   your inline review comments: the same, plus path
 #
-# Only the logged-in user's feedback is printed; it is the only feedback to act on.
-# REST rather than `gh pr view --json comments`, because Step 4's reaction endpoints need
-# the numeric `id`, not a GraphQL node ID. `handled` is true once *you* reacted 🚀: the
-# reaction count alone is a bare total, so someone else's 🚀 used as emphasis would hide
-# a comment nobody handled.
+# REST rather than `gh pr view --json comments`: the reaction endpoints need numeric ids.
+# `handled` means *you* reacted 🚀; the count alone would let someone else's 🚀 hide a
+# comment nobody handled.
 #
 # Exit codes:
 #   0  Printed.

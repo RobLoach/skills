@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Split a merge request's failing CI jobs into the ones this branch introduced and the
-# ones its target branch already fails, so a run fixes its own breakage and reports the
-# rest instead of working around it.
+# ones its target branch already fails.
 #
 # Usage: bash scripts/compare-to-target.sh <project> <mr-iid>
 #
-# Compares the merge request's head pipeline with the newest finished pipeline on its
-# target branch, job by job and newest-attempt-wins, as wait-for-pipeline.sh does. A job
-# that fails on both is pre-existing - but it can still hide new errors (one more phpstan
-# finding in an already-red phpstan), so the two logs are diffed as well. Numbers are
-# masked before diffing, since line numbers, timings and counts shift on any change, and
-# runner chatter (pod names, upload tokens) is dropped. What is left under `+` is in this
-# branch's log and not the target's: read it, but it is a lead rather than a verdict.
-#
-# Logs come through job-log.sh beside this script, which strips the ANSI noise.
+# A job failing on both can still hide new errors (one more phpstan finding in an
+# already-red phpstan), so their logs are diffed too, with numbers masked (line numbers,
+# timings and counts shift on any change) and runner chatter dropped. Lines under `+`
+# are a lead, not a verdict.
 #
 # Exit codes:
 #   0  Nothing new: every failing job also fails on the target branch with no extra
@@ -36,7 +29,6 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
@@ -55,7 +47,6 @@ failing_jobs() {
         | .[] | select(.status == "failed" or .status == "canceled") | "\(.name)\t\(.id)"'
 }
 
-# A log reduced to its distinct lines, with what shifts between any two runs masked.
 # grep exits 1 when it filters out every line, which pipefail would report as an
 # unreadable log; only its 2, a real error, is allowed through.
 normalized_log() {

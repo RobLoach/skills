@@ -1,30 +1,19 @@
 #!/usr/bin/env bash
 #
 # Gather everything a plan has to be checked against - the queue, the releases, the
-# branches, the labels and the open merge requests - in one read, as one JSON object.
+# branches, the labels and the open merge requests - as one JSON object.
 #
 # Usage: bash scripts/project-context.sh <project>
 #
-# <project> is the project's machine name - "ai_ckeditor", not "project/ai_ckeditor".
-#
 # `issue_queue` comes from the project's `issues_enabled` flag, not an empty issue list:
-# a queue that never migrated (core, eck) has the tracker switched off, while a freshly
-# migrated one is legitimately empty. `open_issues` is one page; `capped` says when the
-# queue is larger, the cue to search per candidate.
+# a queue that never migrated (core, eck) has the tracker off, while a freshly migrated
+# one is legitimately empty. `open_issues` is one page; `capped` says the queue is
+# larger, the cue to search per candidate.
 #
-# Emits one JSON object:
-#   {
-#     "project", "path", "default_branch", "archived",
-#     "issue_queue":  "gitlab" | "drupal.org",
-#     "open_issues_count": the queue's real total, 0 when it is not in GitLab,
-#     "capped":       true when open_issues is a sample rather than the whole queue,
-#     "labels":       [string], the names this project has actually defined,
-#     "branches":     [{name, default}],
-#     "tags":         [{name, date}], newest releases first,
-#     "open_issues":  [{iid, title, labels, updated_at, url, mrs}],
-#     "recently_closed": [{iid, title, updated_at, url}],
-#     "open_merge_requests": [{iid, title, source_branch, url}]
-#   }
+# Keys: project, path, default_branch, archived, issue_queue ("gitlab" | "drupal.org"),
+# open_issues_count, capped, labels, branches [{name, default}], tags [{name, date}],
+# open_issues [{iid, title, labels, updated_at, url, mrs}], recently_closed
+# [{iid, title, updated_at, url}], open_merge_requests [{iid, title, source_branch, url}].
 #
 # Exit codes:
 #   0  Context on stdout, as one JSON object.
@@ -38,7 +27,6 @@ if [ "$#" -ne 1 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 ENC="$NAMESPACE%2F$PROJECT"
@@ -46,7 +34,6 @@ PAGE=100
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-# Two steps: `glab api` exits non-zero on a 404, which `set -e` would turn into a silent end.
 META=$(api "projects/$ENC" 2>/dev/null) || META=''
 
 if [ "$(printf '%s' "${META:-null}" | jq -r '.id // empty')" = "" ]; then

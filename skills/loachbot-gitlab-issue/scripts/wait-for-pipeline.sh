@@ -1,58 +1,30 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Wait for a merge request's pipeline to settle, then report every job that is not
 # green - including the ones the pipeline itself forgives.
 #
 # Usage: bash scripts/wait-for-pipeline.sh <project> <mr-iid> [head-sha]
 #
-# Pass [head-sha] - `git rev-parse HEAD` after a push - whenever you have just pushed.
-# For a few seconds after a push the merge request still points at the *previous*
-# commit's pipeline, and settling on that one reports a stale result: a green from
-# before the change, or a red that the push already fixed. With [head-sha] given, only a
-# pipeline for that commit counts. [head-sha] must be a full 40-character SHA; a short
-# one is expanded with the current checkout's git, since GitLab only reports full SHAs.
+# Pass [head-sha] after a push: for a few seconds the merge request still points at the
+# previous commit's pipeline, whose result is stale. A short SHA is expanded with the
+# local git, since GitLab only reports full ones. A merged-results pipeline runs a merge
+# commit with [head-sha] as a parent, so that counts as a match too.
 #
-# A merged-results pipeline (project/ai runs them) does not run [head-sha] itself: it
-# runs refs/merge-requests/<iid>/merge, a merge commit with [head-sha] as one parent. So
-# a pipeline whose commit has [head-sha] among its parents counts as well; without that,
-# such a project is never matched and every wait ends in 8.
+# Drupal's CI template marks some jobs `allow_failure: true`, so the pipeline and the
+# merge request badge both say passed with those gates red. This reads per-job status
+# and matches each job's own allow_failure flag, since which jobs are forgiven varies by
+# project.
 #
-# Drupal's GitLab CI template marks some jobs `allow_failure: true`: they fail without
-# failing the pipeline, so `glab ci status` and the merge request's own badge both agree
-# it passed. Anything that trusts the rollup will call such a merge request done with
-# those gates broken, which is the one outcome this script exists to prevent: it reads
-# per-job status and treats a forgiven failure as a failure.
+# The pipeline may run in the parent project rather than the fork (GitLab does that when
+# the author can push to the parent), and asking the wrong one is a flat 404, so
+# head_pipeline.project_id decides. The merge request list endpoint omits head_pipeline,
+# so this polls the single-merge-request read.
 #
-# Which jobs are forgiven is per-project configuration rather than a fixed set - the lint
-# jobs usually, but eslint, composer variants and phpunit variants on some projects - so
-# this matches on each job's own allow_failure flag and never on a list of names.
-#
-# Two details that are easy to get wrong, and silently:
-#   * Which project holds the pipeline is not fixed. GitLab runs a fork's merge request
-#     pipeline in the *parent* project when its author can push there, so a maintainer's
-#     own merge request keeps it on the project while a contributor's leaves it on the
-#     fork - and asking the wrong one returns a flat 404 rather than anything to act on.
-#     head_pipeline.project_id says which it is; source_project_id is only the fallback
-#     for a payload that omits it.
-#   * The merge request *list* endpoint omits head_pipeline entirely. Only a
-#     single-merge-request read carries it, so that is what this polls.
-#
-# Each failing job is printed with its id, and the pipeline's project once, so its log can
-# be read from the right project with job-log.sh. Jobs are reported newest-run-wins: a
-# retried job appears once per attempt, and only the latest reflects reality.
-#
-# On a failure this runs compare-to-target.sh beside it, so the caller learns at once
-# whether the branch broke something or the target branch was already red. With no
-# target pipeline to compare against, every failure counts as new.
-#
-# Polls rather than streaming, so bounding the wait needs nothing but `sleep` - no
-# GNU `timeout`, which is absent on stock macOS. The whole wait is capped at
-# LOACHBOT_PIPELINE_TIMEOUT seconds (default 420, leaving room for the compare) so one call fits a 10-minute tool
-# limit; a progress line goes to stderr on every poll so a long wait is not mistaken for
-# a hang.
+# On a failure this runs compare-to-target.sh, so the caller learns whether the target
+# branch was already red. Polls with `sleep` rather than GNU `timeout`, absent on macOS;
+# LOACHBOT_PIPELINE_TIMEOUT (default 420) keeps one call within a 10-minute tool limit.
 #
 # Exit codes:
 #   0  Every job passed, or the project has no CI at all - which is only believed when
@@ -67,7 +39,6 @@
 set -euo pipefail
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=${1:?project machine name required}
 IID=${2:?merge request iid required}
@@ -88,12 +59,10 @@ fi
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-read_mr() { api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null; }
-
 out_of_time() { [ "$SECONDS" -ge "$TIMEOUT_SECONDS" ]; }
 
-# Is the attached pipeline the one for [head-sha]? Directly, or as a merged-results
-# pipeline whose merge commit has it as a parent. A failed read is just "not yet".
+# Is the attached pipeline the one for [head-sha], directly or as a merged-results
+# parent? A failed read is just "not yet".
 pipeline_matches_head() {
     if [ -z "$HEAD_SHA" ] || [ "$PIPELINE_SHA" = "$HEAD_SHA" ]; then
         return 0
@@ -104,11 +73,9 @@ pipeline_matches_head() {
     printf '%s\n' "$PARENTS" | grep -qx "$HEAD_SHA"
 }
 
-# Does the commit just pushed configure CI? Asked only when [head-sha] was given, since
-# that is the case where a missing pipeline is one still coming rather than one that
-# never will - drupal.org's pipeline creation can lag a push by minutes under load. The
-# checkout this runs from is the one that was pushed; a project-level ci_config_path
-# covers CI configured outside the repository.
+# Does the pushed commit configure CI (in the repo, or via a project-level
+# ci_config_path)? If so a missing pipeline is one still coming - drupal.org's pipeline
+# creation can lag a push by minutes - rather than one that never will.
 has_ci() {
     [ -n "$HEAD_SHA" ] || return 1
     git cat-file -e "$HEAD_SHA:.gitlab-ci.yml" 2>/dev/null && return 0
@@ -116,17 +83,12 @@ has_ci() {
         jq -r '.ci_config_path // empty')" ]
 }
 HAS_CI=false
-if has_ci; then
-    HAS_CI=true
-fi
+has_ci && HAS_CI=true
 
-# A pipeline takes a moment to attach after a push.
 sleep "$SETTLE_SECONDS"
 
-# A project whose pipeline has not attached yet looks exactly like one with no CI, so
-# believe "no CI" only after several probes. Getting this wrong would mark a merge
-# request done with its CI never run. A pipeline for an older commit is not the one
-# being waited for: keep polling until the merge request points at [head-sha].
+# A pipeline not attached yet looks exactly like no CI, so "no CI" is believed only
+# after several probes; believing it early would mark the merge request done unverified.
 PIPELINE_ID=
 PIPELINE_SHA=
 PIPELINE_PROJECT=
@@ -135,11 +97,10 @@ MATCHED=false
 POLL=0
 while :; do
     POLL=$((POLL + 1))
-    if MR=$(read_mr); then
+    if MR=$(api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null); then
         MR_IID=$(printf '%s' "$MR" | jq -r '.iid // empty')
         PIPELINE_ID=$(printf '%s' "$MR" | jq -r '.head_pipeline.id // empty')
         PIPELINE_SHA=$(printf '%s' "$MR" | jq -r '.head_pipeline.sha // empty')
-        # The pipeline names the project it ran in; fall back to the fork without it.
         PIPELINE_PROJECT=$(printf '%s' "$MR" |
             jq -r '.head_pipeline.project_id // .source_project_id // empty')
     fi
@@ -147,8 +108,7 @@ while :; do
         MATCHED=true
         break
     fi
-    # Nothing attached at all after the probes: an unreadable merge request, or no CI.
-    # A commit that configures CI keeps waiting instead, up to the timeout.
+    # A commit that configures CI keeps waiting, up to the timeout.
     if [ -z "$PIPELINE_ID" ] && [ "$POLL" -ge "$NO_PIPELINE_PROBES" ] &&
         { [ -z "$MR_IID" ] || [ "$HAS_CI" != true ]; }; then
         break
@@ -178,21 +138,19 @@ if [ "$MATCHED" != true ]; then
     exit 8
 fi
 
-# Wait for the pipeline itself to reach a terminal state. `manual` and `scheduled`
-# are terminal too: nothing further happens without a human.
-#
-# A single unreadable response is a blip, not an answer. Giving up on the first one
-# would abandon a run over one dropped connection, so only a run of them counts as
-# "cannot read" - the same reasoning as the no-pipeline probes above.
+# `manual` and `scheduled` are terminal: nothing further happens without a human. One
+# unreadable response is a blip, so only a run of them counts as "cannot read".
 STATUS=
 MISSES=0
+SETTLED=false
 while :; do
-    if ! STATUS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID" 2>/dev/null |
-        jq -r '.status // empty'); then
-        STATUS=
-    fi
+    STATUS=$(api "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID" 2>/dev/null |
+        jq -r '.status // empty') || STATUS=
     case $STATUS in
-        success | failed | canceled | skipped | manual | scheduled) break ;;
+        success | failed | canceled | skipped | manual | scheduled)
+            SETTLED=true
+            break
+            ;;
         "")
             MISSES=$((MISSES + 1))
             if [ "$MISSES" -ge "$NO_PIPELINE_PROBES" ]; then
@@ -208,16 +166,12 @@ while :; do
     sleep "$POLL_SECONDS"
 done
 
-case $STATUS in
-    success | failed | canceled | skipped | manual | scheduled) ;;
-    *)
-        echo "pipeline $PIPELINE_ID is still $STATUS after ${SECONDS}s; run this again" >&2
-        exit 8
-        ;;
-esac
+if [ "$SETTLED" != true ]; then
+    echo "pipeline $PIPELINE_ID is still $STATUS after ${SECONDS}s; run this again" >&2
+    exit 8
+fi
 
-# --paginate prints one array per page; a large pipeline (Drupal core's) has more than
-# one page of jobs, and the second page is as likely to hold the failure as the first.
+# --paginate prints one array per page, and a large pipeline (core's) has several.
 if ! JOBS=$(api --paginate "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" \
     2>/dev/null | jq -sc 'add') ||
     [ "$(printf '%s' "$JOBS" | jq -r 'type')" != "array" ]; then
@@ -225,17 +179,12 @@ if ! JOBS=$(api --paginate "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jo
     exit 7
 fi
 
-# A retried job is listed once per attempt; keep the highest id per name, which is
-# always the most recent run.
-LATEST=$(printf '%s' "$JOBS" | jq -c '
-    group_by(.name)
-    | map(max_by(.id))
-    | map({id, name, status, allow_failure})
-')
+# A retried job is listed once per attempt; the highest id is the latest run.
+LATEST=$(printf '%s' "$JOBS" | jq -c 'group_by(.name) | map(max_by(.id) | {id, name, status, allow_failure})')
 
 FAILED=$(printf '%s' "$LATEST" | jq -r '
-    map(select(.status == "failed" or .status == "canceled"))
-    | .[]
+    .[]
+    | select(.status == "failed" or .status == "canceled")
     | "  \(.name): \(.status)\(if .allow_failure then " (allow_failure)" else "" end) job=\(.id)"
 ')
 
@@ -246,7 +195,7 @@ printf '%s' "$LATEST" | jq -r '.[] | "  \(.name): \(.status)"' | sort
 printf '\nfailing jobs:\n%s\n\n' "$FAILED"
 
 CMP=0
-# Exit 2 only on the compare's say-so. Its 0 can mean it read a newer pipeline with
+# Exit 2 only on the compare's say-so: its 0 can mean it read a newer pipeline with
 # nothing failing, which confirms nothing about the failures above.
 CMP_OUT=$(bash "$HERE/compare-to-target.sh" "$PROJECT" "$IID") || CMP=$?
 printf '%s\n' "$CMP_OUT"

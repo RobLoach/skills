@@ -1,28 +1,19 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Prepare a dedicated git worktree for one issue or Pull Request, and print its path.
 #
 # Usage: bash scripts/setup-github-worktree.sh <owner> <repo> issue|pr <number>
 #
-# The base clone at ~/Projects/<owner>/<repo> stays on the default branch. The worktree
-# is recreated from scratch on every run: finished work is always pushed (and a PR's 🚀
-# reactions only follow a push), so the remote is the source of truth and leftovers from
-# an interrupted run are simply redone.
+# The worktree is recreated every run: finished work is always pushed, so the remote is
+# the source of truth.
 #
-#   issue  Branch fix/issue-<number>, the same whatever the title says. Resumes from
-#          origin/fix/issue-<number> when an earlier run pushed one, then rebases onto
-#          the default branch. The branch is bot-owned, so another worktree holding it
-#          is stale and removed.
+#   issue  Branch fix/issue-<number>, resumed from origin when pushed before, rebased
+#          onto the default branch. Bot-owned, so a worktree holding it is stale.
 #   pr     `gh pr checkout`, which resolves fork remotes. The branch may be the user's
-#          own checkout, so another worktree holding it is reported, never taken. A
-#          local branch no worktree holds is a leftover from an earlier run, and after
-#          a force-push to the PR it can no longer fast-forward, so `--force` resets it
-#          to the PR head; finished work is always pushed, so nothing is lost.
-#
-# Only the worktree path goes to stdout, so callers capture it without a pipe.
+#          own checkout, so a worktree holding it is reported, never taken. `--force`
+#          resets a leftover local branch, which cannot fast-forward after a force-push.
 #
 # Exit codes:
 #   0  Ready. Stdout is the worktree path.
@@ -61,11 +52,9 @@ fi
 cd "$BASE"
 git fetch origin --prune
 
-# This run's own worktree from an earlier run, registered or not; prune forgets it.
 rm -rf "$WT"
 git worktree prune
 
-# <branch>: prints the path of the worktree that has it checked out, if any.
 holder() {
     git worktree list --porcelain |
         awk -v ref="branch refs/heads/$1" '/^worktree /{wt = substr($0, 10)} $0 == ref {print wt}'

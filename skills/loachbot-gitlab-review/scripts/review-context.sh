@@ -1,32 +1,19 @@
 #!/usr/bin/env bash
 #
-# Gather everything a review of one drupal.org merge request needs, as a single JSON
-# object on stdout.
+# Gather everything a review of one drupal.org merge request needs, as one JSON object.
 #
 # Usage: bash scripts/review-context.sh <project> <mr-iid>
 #
-# <project> is the project's machine name - "ai_ckeditor", not "project/ai_ckeditor".
+# Keys: merge_request {iid, title, author, state, draft, source_branch, target_branch,
+# source_project_id, web_url, description}, diff_refs {base_sha, start_sha, head_sha}
+# (inline comments need these), issue_ref, files [{new_path, old_path, new_file,
+# deleted_file, renamed_file, diff}], pipeline_project_id, discussions [{id, resolved,
+# path, line, author, body}].
 #
-# Emitted shape:
-#   {
-#     "merge_request": { iid, title, author, state, draft, source_branch,
-#                        target_branch, source_project_id, web_url, description },
-#     "diff_refs":     { base_sha, start_sha, head_sha },   # inline comments need these
-#     "issue_ref":     the issue number from the fork's path, or null,
-#     "files":         [ { new_path, old_path, new_file, deleted_file, renamed_file, diff } ],
-#     "pipeline_project_id": the project the pipeline ran in - read job logs from here,
-#     "discussions":   [ { id, resolved, path, line, author, body } ]  # existing threads
-#   }
-#
-# `discussions` is there so a review never re-posts a finding an earlier one already
-# left: reply in that thread instead. Each entry is the thread's first note, trimmed.
-#
-# Failing jobs are compare-to-target.sh's to report. Which project holds the pipeline
-# is not fixed - GitLab runs a fork's merge request pipeline in the *parent* project when
-# its author can push there - so head_pipeline.project_id is passed on for job logs.
-#
-# `issue_ref` is null when the merge request came from a plain branch rather than a
-# drupal.org issue fork. Review the diff anyway and say so.
+# `discussions` (each thread's first note, trimmed) is there so a review replies in an
+# existing thread rather than re-posting a finding. `pipeline_project_id` is where job
+# logs live: GitLab runs a fork's pipeline in the parent when the author can push there.
+# `issue_ref` is null for a plain-branch merge request; review the diff anyway.
 #
 # Exit codes:
 #   0  Context on stdout.
@@ -40,7 +27,6 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
@@ -54,18 +40,11 @@ if ! MR=$(api "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID" 2>/dev/null) 
 fi
 
 SOURCE_ID=$(printf '%s' "$MR" | jq -r '.source_project_id // empty')
-# The pipeline names the project it ran in; fall back to the fork without it.
 PIPELINE_PROJECT=$(printf '%s' "$MR" |
     jq -r '.head_pipeline.project_id // .source_project_id // empty')
 
-# The issue number is the numeric tail of the fork's path: issue/<project>-<number>.
-# Taking the last hyphen-separated field keeps working for projects whose machine name
-# itself contains a hyphen.
-#
-# Only the number is resolved here. Turning it into an issue is read-issue.sh's job,
-# because what the number means depends on whether this project's queue was migrated
-# into GitLab, and the two numbering spaces overlap - so guessing wrong returns a real
-# but unrelated issue rather than nothing at all.
+# The last hyphen-separated field of issue/<project>-<number>, which survives a hyphen
+# in the machine name. What the number means is read-issue.sh's question.
 ISSUE_REF=null
 if [ -n "$SOURCE_ID" ]; then
     REF=$(api "projects/$SOURCE_ID" 2>/dev/null |

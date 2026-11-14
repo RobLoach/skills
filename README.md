@@ -28,9 +28,9 @@ PR Fixer          addresses the comments, marks it ready for review
 You               merge it
 ```
 
-Nothing moves without you: the Planner files only the issues you approve, and a Pull Request only reaches the PR Fixer once you have reviewed it and set it back to **Draft**. Merging is always yours.
+Nothing moves without you: the Planner files only what you approve, a PR reaches the PR Fixer only once you set it back to **Draft**, and merging is yours.
 
-The four GitLab skills chain the same way, except that the handoff is a `state::` label on the issue rather than a draft Pull Request, because that is how drupal.org's review workflow works:
+The four GitLab skills chain the same way, with a `state::` label on the issue as the handoff:
 
 ```
 Planner           files the issues you approve, unassigned in the project's queue
@@ -46,9 +46,7 @@ MR Fixer          rebases onto the target branch, makes every CI job green, stat
 A maintainer      reviews and commits it
 ```
 
-Unassigned is the handoff at the top of that chain: a claim on drupal.org is a `/do:assign me` comment rather than a field, so the Planner files an issue and leaves it free, which is exactly what the Issue Fixer reads as available to pick up.
-
-The same bargain holds, and rather more firmly: none of the four merges, approves, or sets `state::rtbc`. Review and commit belong to the project's maintainers, who on somebody else's module are not you.
+None of the four merges, approves, or sets `state::rtbc` — review and commit belong to the project's maintainers.
 
 ## Installation
 
@@ -63,11 +61,9 @@ The same bargain holds, and rather more firmly: none of the four merges, approve
    ```bash
    gh skills install robloach/skills --scope user --agent claude-code --all
    ```
-   `--all` takes all of them without prompting, and `--scope user` makes them available in every project rather than just the current one. Swap `--agent` for whichever agent you use — `gh skills install --help` lists the supported values, including `opencode`, `codex`, `cursor` and `github-copilot`.
+   Swap `--agent` for your agent (`gh skills install --help` lists them, e.g. `opencode`, `codex`, `cursor`). `gh skills` is in preview, so check `--help` if the flags have changed.
 
-   `gh skills` is in preview and its flags can change without notice, so check `--help` if a command above stops matching your `gh`.
-
-   Or install by hand: copy each `skills/<name>/` folder — `SKILL.md` and the files beside it — into your agent's skills directory, such as `~/.claude/skills/`.
+   Or copy each `skills/<name>/` folder into your agent's skills directory, such as `~/.claude/skills/`.
 
 3. You're good to go! Run "Plan some issues for my most popular repo" to try it out.
 
@@ -91,7 +87,7 @@ Plan pntr_physfs and pntr_pixelfont, then make PRs for P1 and F2
 
 ### GitHub Issue Fixer
 
-Picks the most-recently-updated issue *created by and assigned to you*, implements the fix in a dedicated git worktree, opens a Pull Request, and verifies CI. It relies on you to review/merge the Pull Requests. If you have feedback on a PR, post the comments inline on GitHub, and set the PRs to Draft, to be actioned by the *Pull Request Fixer below*.
+Picks the most-recently-updated issue *created by and assigned to you*, implements the fix in a git worktree, opens a Pull Request, and verifies CI. For feedback, comment inline and set the PR back to Draft for the *Pull Request Fixer*.
 
 **Examples:**
 
@@ -106,7 +102,7 @@ LoachBot Issue fixes until there aren't any more left
 
 Finds your draft Pull Requests, addresses your reviewed inline comments in a dedicated worktree, reacts with 🚀 to each comment that was handled, verifies that the CI passes, then marks the PR back to ready for review.
 
-A Pull Request has to be **open**, a **draft**, **authored by you** and **assigned to you** to be picked up. The Issue Fixer self-assigns the PRs it opens, so the handoff works on its own — but a Pull Request you opened by hand stays invisible until you assign it to yourself.
+A Pull Request has to be **open**, a **draft**, **authored by you** and **assigned to you** to be picked up; assign PRs you opened by hand to yourself.
 
 **Examples:**
 
@@ -120,11 +116,9 @@ Run LoachBot Pull Requests until there aren't any left
 
 Reads a [drupal.org](https://www.drupal.org) project, learns its goals, and proposes a set of issues to file in its GitLab queue.
 
-Planning a contrib module is not planning a GitHub repository with different URLs, so this is its own skill rather than a flag on the GitHub Planner. A project supports several branches at once — `1.4.x`, `1.5.x`, a default branch out in front — so every issue in the plan names the branch it lands on. Issue metadata is the project's own `category::` and `priority::` labels, and only the ones it has actually defined, because filing against a label that doesn't exist creates it. And a plan checked against a queue of hundreds needs the queue read first: duplicates are the failure mode, not missing ideas.
+Every issue names the branch it lands on and uses only the project's existing `category::` and `priority::` labels. It also plans from drupal.org-specific signals: `core_version_requirement` against the next Drupal major, red-but-forgiven CI jobs, and a default branch far ahead of its newest release.
 
-Three places worth planning from are specific to drupal.org and easy to miss: `core_version_requirement` against the next Drupal major, the CI jobs the pipeline forgives with `allow_failure: true` while they sit red, and a default branch a long way ahead of its newest release tag.
-
-Everything it files is unassigned, carries drupal.org's own issue summary headings and the `AI-Generated: Yes` disclosure, and waits for your explicit approval first. A project whose queue never moved to GitLab — Drupal core among them — has nothing to file against through the API, so there the plan is handed to you to file by hand.
+Everything it files is unassigned, carries the `AI-Generated: Yes` disclosure, and waits for your explicit approval first. For a project whose queue never moved to GitLab — Drupal core among them — it hands you the plan to file by hand.
 
 **Examples:**
 
@@ -137,15 +131,9 @@ Plan issues for https://www.drupal.org/project/ai_ckeditor
 
 ### GitLab Issue Fixer
 
-Picks up one open [drupal.org](https://www.drupal.org) issue you reported, claims it by commenting `/do:assign me`, implements the fix on the issue's shared fork, opens a merge request, then unassigns itself and sets `state::needsReview` with a short summary of what it did. Claim and handback both go through drupalbot's `/do:` commands rather than the API, so they work the same whether or not you hold a role on the project.
+Picks up one open [drupal.org](https://www.drupal.org) issue you reported, claims it by commenting `/do:assign me`, implements the fix on the issue's shared fork, opens a merge request, then unassigns itself and sets `state::needsReview` with a short summary of what it did. Merge request descriptions are one short paragraph, a `Closes #<id>` line, and `AI-Generated: Yes`, because drupal.org's [AI policy](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) requires disclosure.
 
-Drupal.org does not work the way a GitHub habit expects, and most of this skill is about the difference. There are no personal forks: every issue has one shared fork at `issue/<project>-<id>` that everybody working the issue pushes to, so the skill continues whatever branch is already there rather than starting its own. Creating that fork and getting push access are not API calls — a contributor who isn't a project member can do neither — so it asks drupalbot with `/do:fork` and `/do:access`.
-
-Merge request descriptions are deliberately plain: one short paragraph saying what the change does, a `Closes #<id>` line, and `AI-Generated: Yes`. That last line is not a courtesy — drupal.org [requires AI-generated contributions to say so](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal), and core's credit policy withholds credit from one that doesn't.
-
-It only claims issues **you reported**, unless you name one directly — self-assigning into somebody else's queue uninvited is not a call a bot gets to make. It skips anything that already has an open merge request, which is the *Merge Request Fixer's* work below, and it skips anything already at `state::needsReview`, `state::rtbc` or beyond.
-
-Projects whose issue queue never moved to GitLab — Drupal core among them — are out of scope here, since `/do:assign me` exists nowhere else.
+It only claims issues **you reported**, unless you name one directly, and skips anything with an open merge request or already at `state::needsReview` or beyond. Drupal core and other projects whose queue never moved to GitLab are out of scope.
 
 Each run ends with a todo list of what it could not do for you: recording your contribution credit, reviewing the merge request, anything it noticed and left out of scope.
 
@@ -160,11 +148,11 @@ Run LoachBot GitLab Issues until there aren't any left
 
 ### GitLab Merge Request Fixer
 
-Takes one of your open [drupal.org](https://www.drupal.org) merge requests, rebases it onto its target branch in a dedicated worktree, resolves what it safely can, and then makes **every** CI job green before handing the issue back for review with `/do:` commands.
+Takes one of your open [drupal.org](https://www.drupal.org) merge requests, rebases it onto its target branch, resolves what it safely can, and makes **every** CI job green before handing the issue back for review.
 
-The emphasis on *every* is the point. Drupal.org's CI template marks some jobs `allow_failure: true`, so a merge request shows a green pipeline and a green badge while those jobs are red — `glab ci status` agrees, and so does the merge request page. Which jobs varies by project: the lint jobs usually, but `eslint`, `composer` variants and even `phpunit` variants on some. This skill reads each job's own flag instead of the rollup, and treats a forgiven failure as a failure — but only the failures this branch introduces. It compares against the target branch's latest pipeline, and reports failures that are already there instead of working around them.
+That includes jobs the pipeline forgives behind a green badge (see the [FAQ](#faq)) — but only failures this branch introduces; ones already failing on the target branch are reported, not worked around.
 
-Point it at a merge request and it takes that one; ask without naming one and it searches your open merge requests for a failing job. It pushes to the issue fork, never to the project, and it never merges or sets `state::rtbc` — review and commit stay with the project's maintainers. It fixes rebases and CI, not review findings, so while a merge request still has unresolved review threads it leaves the issue's state alone and tells you instead.
+Name a merge request, or let it search yours for a failing job. It pushes only to the issue fork, and while review threads are unresolved it leaves the issue's state alone and tells you.
 
 **Examples:**
 
@@ -180,9 +168,7 @@ Run LoachBot MRs until there aren't any left
 
 Reviews one [drupal.org](https://www.drupal.org) merge request — yours or somebody else's — against the issue it claims to fix and against Drupal's own conventions, then posts its findings as resolvable inline threads plus a single summary.
 
-It starts from the issue rather than the code, because the most common real finding is scope: something the diff does that nobody asked for, or something the issue asked for that the diff never does. It also reads the pipeline per job, so a merge request sitting on a red but forgiven job behind a green badge gets called out.
-
-Read-only against git by default — no clone, no checkout, no push — so it can run alongside anything else, including the Fixer working on the same merge request. Ask for the review "here" to get a numbered list without posting anything, or ask it to fix findings afterwards and it hands off to the Merge Request Fixer's worktree and resolves the threads it fixed. It will set `state::needsWork` when a finding genuinely blocks, and it will never approve, merge, or set `state::rtbc`.
+It starts from the issue, since the most common finding is scope, and reads the pipeline per job so forgiven failures get called out. It is read-only against git by default, so it can run alongside the Fixer. Ask for the review "here" to get a numbered list without posting, or ask it to fix findings afterwards. It sets `state::needsWork` only when a finding blocks.
 
 **Examples:**
 
@@ -205,12 +191,11 @@ gh skills update --all
 
 The skills bake in a few defaults, so feel free to bend them to your own workflow:
 
-- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` — `~/Projects/drupalcode/<project>` for the GitLab Planner and both GitLab Fixers, which is why those three must not run against the same project at once — and each issue, Pull Request or merge request gets a throwaway worktree beside it in `<base>.worktrees/`, removed once the run finishes. Set `LOACHBOT_PROJECTS_DIR` to put all of that somewhere else. The skills treat that base clone as theirs — either Planner resets it to the remote default branch on every run — so if it is also *your* working clone, point one of the two somewhere else. They stop rather than clobber anything the remote doesn't already have, uncommitted or unpushed, but they will move you back to the default branch. The Reviewer never clones at all.
+- **Clone location**: base clones go in `~/Projects/<owner>/<repo>` (`~/Projects/drupalcode/<project>` for GitLab), with throwaway worktrees beside them in `<base>.worktrees/`. Set `LOACHBOT_PROJECTS_DIR` to move them. The skills treat the base clone as theirs and will check out the default branch in it, so don't share it with your own working clone; they stop rather than discard unpushed work.
 - **Namespace and host**: the GitLab skills assume drupal.org's `project/` namespace at `git.drupalcode.org`. `LOACHBOT_GITLAB_NAMESPACE` and `LOACHBOT_GITLAB_HOST` override both — use `sandbox` for a drupal.org sandbox project, or point them at another GitLab entirely.
 - **Commit style**: inherited from your global settings, for both commit messages and attribution. The GitLab skills additionally follow drupal.org's `Issue #<id>: <description>` convention.
-- **Merge request descriptions**: the GitLab Issue Fixer writes one short paragraph, `Closes #<id>`, and `AI-Generated: Yes`. The disclosure line is policy rather than preference — bending it costs the contribution its credit.
 
-The best place to record a change is your agent's own memory or project instructions — tell it "always clone into `~/src` instead", and it will apply that on every run. That survives updates, whereas editing `SKILL.md` directly does not: `gh skills update` re-downloads each skill, and `--force` overwrites locally modified skill files with their original content. If you do edit the files, keep your changes somewhere you can reapply them, or pin the skill with `gh skills install --pin <tag-or-sha>` to opt out of updates entirely.
+Record changes in your agent's memory or project instructions (e.g. "always clone into `~/src` instead") rather than editing `SKILL.md`, which `gh skills update` overwrites — or pin with `gh skills install --pin <tag-or-sha>`.
 
 ## Development
 
@@ -220,51 +205,33 @@ Every skill is checked on push and pull request by [`.github/workflows/validate.
 python3 .github/scripts/validate-skills.py
 ```
 
-It validates each `SKILL.md`'s frontmatter, confirms every documented `bash` snippet is valid bash, keeps `scripts/` references and their files in step, checks that shared-marked scripts and sections match across skills, holds each script's documented exit codes to the ones it really raises *and* to the ones its `SKILL.md` tells the agent to act on, and runs ShellCheck over the scripts. No dependencies beyond `python3` and ShellCheck.
-
-[`AGENTS.md`](AGENTS.md) writes down the invariants behind those checks, plus the conventions CI cannot check. Worth reading before adding a skill — by a person or an agent.
+See [`AGENTS.md`](AGENTS.md) for what it checks and the conventions it cannot, before adding a skill.
 
 ## FAQ
 
 **Why "Loachbot"?**
 
-Your skills directory can get messy, so I've opted to namespace these as `loachbot` so that they're easy to find. Also allows explicit calling out when interacting with your coding agent.
+A namespace, so they're easy to find and to call out by name.
 
 **Why does my issue/PR title end with "(Needs Info)"?**
 
-A run hit something it couldn't resolve autonomously — an unclear task, or CI failures needing human judgment — so it parked the item and stopped. It posts a comment saying what it needs before parking, so start there. Reply with a comment answering it; the next run sees your reply, restores the title, and resumes with your answer as context. Parked items are skipped until someone replies.
-
-The *GitLab Issue Fixer* parks the same way but without touching the title, since a drupal.org issue is usually somebody else's to name: it adds `state::blocked` instead, and removes it again once you reply. If you apply `state::blocked` yourself it will leave that issue alone entirely — there is no question of its own to measure your reply against.
+A run hit something needing your judgment, so it posted a comment saying what it needs and parked the item. Reply to that comment; the next run restores the title and resumes with your answer. The *GitLab Issue Fixer* parks with a `state::blocked` label instead of renaming, and leaves alone any issue you blocked yourself.
 
 **Does it record my drupal.org contribution credit?**
 
-No, and it can't. Credit comes from an attribution record on drupal.org itself — there is no `/do:` command for it and no API, only a page the DrupalBot comment links to. A merge request that gets committed without one earns you nothing for the work.
-
-So the *GitLab Issue Fixer* ends every run by telling you, as the first item on a todo list. The same list carries anything else only you can close out: reviewing the merge request, and anything it noticed but deliberately kept out of the diff. It is a list in the reply, not a comment on the issue — the run writes to drupal.org only when the workflow calls for it. Treat it as the handover rather than a formality: the run is finished, your part isn't.
+No — there is no API for it, only the page the DrupalBot comment links to. The *GitLab Issue Fixer* reminds you as the first item of its closing todo list.
 
 **Why does it react with 🚀 instead of resolving my review comments?**
 
-A reaction works on every kind of feedback. Resolving only applies to inline review threads, so regular Pull Request comments and review summaries would end up with no "already handled" marker at all, and the next run would redo them. Reactions also survive a force-push that can leave a resolved thread stale.
-
-One consequence: 🚀 is reserved. LoachBot runs as you, so it cannot tell its own reaction from one you added yourself — a 🚀 you leave on your own review comment hides that comment from every later run. Use any other emoji for emphasis.
+A reaction works on every kind of feedback, not just inline threads, and survives force-pushes. Since LoachBot runs as you, a 🚀 you add yourself hides that comment from later runs — use another emoji.
 
 **Do the GitLab skills work on Drupal core, whose issues are still on drupal.org?**
 
-Yes. Contrib mostly had its issue queues migrated into GitLab; core and some others — `eck`, for instance — did not, and keep theirs on drupal.org. The skills check which of the two a project uses and read the issue from the right place, so a core merge request gets reviewed against its real requirement rather than against nothing.
-
-Two consequences worth knowing. Reading a drupal.org-only issue needs the `drupalorg` CLI, and without it the skills stop rather than carry on half-informed — the MR Fixer's refusal to force-push over an RTBC issue depends on that read. And drupal.org moves issue status through its web UI, with no `/do:` equivalent, so for those projects the skills report what status to set and leave it to you.
-
-That second consequence puts core out of reach of the *Issue Fixer* specifically: claiming an issue means commenting `/do:assign me`, and there is nothing to comment at. It says so and stops rather than starting work it cannot hand back. The MR Fixer and the Reviewer both work on core merge requests normally.
-
-The *Planner* lands in between. It plans such a project fine — the code is the same code — but there is no GitLab queue to file into, so it hands you the issues to file by hand and uses the `drupalorg` CLI to check them for duplicates first. Without that CLI it says plainly that no duplicate check was possible, rather than filing blind into a queue of thousands.
-
-The reason they check rather than just trying both: the two numbering spaces overlap. `ai_ckeditor`'s GitLab issue 3615852 is about stale toolbar items, while drupal.org's *node* 3615852 is an unrelated core issue about `ConfigManager`. Asking both and keeping whichever answers would hand back a real, confident, wrong requirement.
+Mostly. The skills detect where a project's issues live and read them with the `drupalorg` CLI (required; they stop without it). The MR Fixer and Reviewer work normally; the Planner hands you its plan to file by hand; the Issue Fixer can't claim with `/do:assign me` there, so it stops. Status changes on those projects are left to you.
 
 **My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 
-Because the pipeline is lying, and noticing that is half of why these exist. Drupal.org's CI template marks some jobs `allow_failure: true`, which means they can fail without failing the pipeline. The rollup goes green, the badge goes green, `glab ci status` says `success` — and the job is still red.
-
-Which jobs are forgiven is per-project configuration rather than a fixed list. Observed in the wild: `ai_ckeditor` forgives four lint jobs, `node_menu_placer` fourteen including `eslint`, and `schemata` sixteen including `phpunit` variants — Drupal core forgives `PHPUnit Unit (Core)`. So the skills read each job's own flag and report what they find, marked so you can see which ones the pipeline was forgiving: the two Fixers fix them, the Reviewer raises them as findings, and the Planner turns a standing red-but-forgiven job into an issue of its own.
+Drupal.org's CI template marks some jobs `allow_failure: true`, so they fail without failing the pipeline: the badge and `glab ci status` say `success` while the job is red. Which jobs varies by project (lint usually, sometimes `eslint` or `phpunit`). The skills read each job's own flag: the Fixers fix them, the Reviewer raises them, and the Planner files issues for standing ones.
 
 **Can I point it at a single repository?**
 

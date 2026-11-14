@@ -1,6 +1,6 @@
 ---
 name: loachbot-github-pr
-description: Address your own review comments on a GitHub Pull Request - picks the most recently updated open draft PR authored by and assigned to you, makes the requested changes, reacts 🚀 to each handled comment, gets CI green, then marks it ready for review. Use when the user wants to address feedback on their draft pull requests, or asks to "run LoachBot Pull Requests", including repeated runs like "until there aren't any left".
+description: Address your own review comments on a GitHub Pull Request - picks the most recently updated open draft PR authored by and assigned to you, makes the requested changes, gets CI green, then marks it ready for review. Use when the user wants to address feedback on their draft pull requests, or asks to "run LoachBot Pull Requests", including repeated runs like "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-pr/SKILL.md
@@ -27,9 +27,9 @@ Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this s
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -40,7 +40,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: repeated-runs -->
@@ -121,8 +121,10 @@ cd "$WT"
 ```
 
 - **4** → another worktree (named on stderr) has the PR branch checked out, possibly the user's own. Report it and stop; never remove it or force-switch branches across worktrees.
-- **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the requested changes do not touch that submodule, continue without it. Otherwise [park](#parking) the PR, naming the submodule.
-- Any other non-zero → checkout failed (stderr names the command). Stop and report; do not force through.
+<!-- SHARED: github-worktree-exit-9 -->
+- **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the work does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
+- Any other non-zero → stderr names the failing command. Report it and stop; do not force through.
+<!-- /SHARED: github-worktree-exit-9 -->
 
 ### 3. Understand the Pull Request
 
@@ -132,12 +134,10 @@ Read the PR and your own feedback on it in one call:
 bash <this skill's directory>/scripts/fetch-feedback.sh <owner> <repo> <number>
 ```
 
-- **0** → one JSON line per item: the PR (`title`, `body`, `last_commit`), your review summaries, and your regular and inline comments with numeric `id`s for Step 4's reactions.
+- **0** → one JSON line per `kind`: `pr` (`title`, `body`, `last_commit`), `review`, `comment` and `inline`, the comments with the numeric `id` Step 4 reacts to.
 - **5** → a read failed (stderr names it). Report it and stop; a partial list would hide work.
 
-Review summaries often carry the overall instructions inline comments assume. They take no reactions, so treat them as context; 🚀 tracking covers only comments.
-
-Address comments with `handled: false`; `handled` means you already reacted 🚀 (Step 4). Handled comments stay binding: an instruction from one still applies to later changes and overrides your own judgment (if one said a change is not needed, do not reintroduce it). For a resumed `(Needs Info)` PR, apply Step 1's answers to the comments they reply to.
+Review summaries take no reactions; treat them as context. Address comments with `handled: false` (not yet 🚀'd). Handled comments stay binding: if one said a change is not needed, do not reintroduce it. For a resumed `(Needs Info)` PR, apply Step 1's answers to the comments they reply to.
 
 Investigate what comments refer to via [Sub-agents](#sub-agents).
 
@@ -186,9 +186,11 @@ Waits up to about 30 minutes:
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 ```
 
-- **0** → passed, or no CI. Continue to Step 6.
-- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without marking ready; a later run picks it up.
-- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push; at most two attempts, never marking ready while red. If still red, or it needs human judgment, [park](#parking) the PR, naming the failing checks.
+<!-- SHARED: github-wait-for-checks -->
+- **0** → passed, or no CI. Continue.
+- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
+- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+<!-- /SHARED: github-wait-for-checks -->
 
 ### 6. Mark the Pull Request as ready
 

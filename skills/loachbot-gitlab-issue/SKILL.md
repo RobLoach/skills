@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-issue
-description: Fix one drupal.org issue end to end - claim it, implement the fix on its issue fork, open a merge request, get every CI job green, and hand it back for review. Works on issues you reported, or any drupal.org issue you name. Use when the user wants to pick up, fix or work on a drupal.org issue, open a merge request for one, or asks to "run LoachBot GitLab Issues", including repeated runs like "three times" or "until there aren't any left".
+description: Fix one drupal.org issue end to end - claim it, open a merge request from its issue fork, get every CI job green, and hand it back for review. Works on issues you reported, or any drupal.org issue you name. Use when the user wants to pick up, fix or work on a drupal.org issue, open a merge request for one, or asks to "run LoachBot GitLab Issues", including repeated runs like "three times" or "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-issue/SKILL.md
@@ -15,8 +15,7 @@ metadata:
 - `jq` on `PATH`; the scripts parse JSON with it.
 - Paths assume the `project/` namespace; set `LOACHBOT_GITLAB_NAMESPACE=sandbox` for sandboxes. `LOACHBOT_GITLAB_HOST` points the scripts at another GitLab; the commands written out here assume `git.drupalcode.org`.
 <!-- /SHARED: gitlab-prerequisites -->
-- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` is optional: it only makes a named issue from a queue that never moved to GitLab (Drupal core among them) report as the wrong kind of project rather than unreadable. This skill cannot work on those either way.
-- Issue forks are always under `issue/`.
+- [`drupalorg`](https://github.com/mglaman/drupalorg-cli) on `PATH` is optional; this skill cannot work on queues that never moved to GitLab (Drupal core among them) either way.
 - SSH access to `git.drupal.org`, for pushes to issue forks.
 - Clones and worktrees go in `~/Projects` (created if missing); `LOACHBOT_PROJECTS_DIR` overrides it.
 
@@ -33,9 +32,9 @@ Scripts live in `scripts/` beside this file, run as `bash <this skill's director
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -46,7 +45,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: repeated-runs -->
@@ -63,18 +62,14 @@ When the user asks for several runs ("five times", "until there aren't any left"
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
 
-Four things here break GitLab habits, quietly. Know them before the first API call.
-
 - **Two hostnames, one service.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Each fails on the other's host, so take remote URLs from the API's `ssh_url_to_repo` instead of composing them.
-- **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in the per-issue fork `issue/<project>-<issue-id>`. Push to the fork.
-- **The pipeline is on the fork, except when it isn't.** GitLab runs a fork's merge request pipeline in the *parent* project when the author can push there: a maintainer's runs on the project, a contributor's on the fork. The wrong one returns a flat `404`. Read `head_pipeline.project_id` from a single-merge-request read; fall back to `source_project_id` only if it is missing.
-- **A green pipeline can hide red jobs.** Drupal.org's CI template sets `allow_failure: true` on some jobs, so they fail while the pipeline, badge and `glab ci status` report success. Which jobs varies per project: usually the lint jobs (`cspell`, `phpcs`, `phpstan`, `stylelint`), sometimes `eslint`, `composer` or even `phpunit` variants. Never match on job names: read each job's `allow_failure` and treat a forgiven failure as a failure.
+- **Two repositories per merge request**: it targets `project/<project>`, but its branch lives in the fork `issue/<project>-<issue-id>`; push to the fork.
+- **The pipeline may be on the fork or the parent project.** Use `head_pipeline.project_id` from a single-merge-request read (fall back to `source_project_id`); the wrong one returns a flat `404`.
+- **A green pipeline can hide red jobs**: never match on job names; read each job's `allow_failure` and treat a forgiven failure as a failure.
 
 ### The issue lives in one of two places
 
-A merge request's issue number is the tail of its fork path: `issue/ai_ckeditor-3615852` means `3615852`. It is a GitLab issue iid where the queue was migrated, a drupal.org node id where it wasn't (Drupal core and `eck` among them). The numbering spaces overlap, so the wrong world returns a real but unrelated issue.
-
-Never try both and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number; its header explains why:
+Never try both GitLab and drupal.org and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number:
 
 ```bash
 bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
@@ -89,10 +84,7 @@ It returns one JSON object either way (`source`, `title`, `status`, `actionable`
 Two `glab api` habits: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents; `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
 <!-- /SHARED: drupal-gotchas -->
 
-Two more matter when starting from an issue:
-
-- **No personal forks.** Everyone working an issue pushes to its one shared fork, `issue/<project>-<issue-id>`. An existing branch there is somebody's work in progress, so Step 4 continues the newest one.
-- **Fork and push access come from a bot.** `/do:fork` creates the fork and `/do:access` grants push access; the API refuses non-members, and drupalbot answers from a queue, so `ensure-fork.sh` posts and waits.
+There are no personal forks: everyone pushes to the issue's one shared fork, and an existing branch there is somebody's work in progress, so Step 4 continues the newest one. Drupalbot's `/do:fork` and `/do:access` create it and grant push access; `ensure-fork.sh` posts and waits.
 
 ## Workflow
 
@@ -112,7 +104,7 @@ Act on its exit code:
 - **6** → report "Nothing to do" and stop.
 - **5** → the search could not be read. Report it and stop.
 
-A `resume` is an earlier run's claim with no merge request yet: **skip Step 2** for it.
+A `resume` is an earlier run's claim with no merge request yet: take it before any `ready`, and **skip Step 2** for it.
 
 A `parked` issue has an unanswered Step 8 question. Check for replies:
 
@@ -159,7 +151,7 @@ EOF
 Skip for a `resume` or `parked` issue (already yours). Otherwise claim it, by comment, before writing code:
 
 ```bash
-bash <this skill's directory>/scripts/claim-issue.sh <project> <issue-iid>
+bash <this skill's directory>/scripts/poll-issue.sh claim <project> <issue-iid>
 ```
 
 Act on its exit code:
@@ -284,27 +276,29 @@ Not a draft: reviewers go by the issue's `state::` label, and nobody reviews a d
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> "$MR_IID" "$(git rev-parse HEAD)"
 ```
 
+<!-- SHARED: gitlab-wait-for-pipeline -->
 Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
 - **0** → every job passed, or the commit configures no CI. Continue.
-- **1** → `new:` lists what this branch introduced, forgiven or not. **Fix all of it.** Delegate per [Sub-agents](#sub-agents) with `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 8. `+` lines are a log diff with numbers masked: a lead, not a verdict.
-- **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them in the handback instead of "The pipeline is green."
-- **7** → pipeline unreadable. Unknown is not passing: report it with the merge request URL and stop.
-- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report pending jobs and the URL and stop without handing back.
+- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them as pre-existing in the handback instead of "the pipeline is green".
+- **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
+- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back.
 
 The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
 
-After **7** or **8**, tell the user a `loachbot-gitlab-mr` run finishes it once CI settles (Step 1 now skips it).
-
-Read a failing job's log from the pipeline project the wait prints (it may be the parent, not the fork):
+Read a failing job's log before guessing from its name, from the pipeline project the wait prints (it may be the parent, not the fork):
 
 ```bash
 bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>
 ```
 
-Exit **7** means the wrong project or job id: check both. Reproduce it locally before pushing a guess.
+Exit **7** means the wrong project or job id: check both. Then reproduce it locally before pushing a guess.
+<!-- /SHARED: gitlab-wait-for-pipeline -->
+
+After **7** or **8**, tell the user a `loachbot-gitlab-mr` run finishes it once CI settles (Step 1 now skips it).
 
 <!-- SHARED: local-tests -->
 #### Running tests locally
@@ -353,12 +347,13 @@ Name the approach and what you were unsure of; "Implemented the fix" tells a rev
 Confirm drupalbot acted:
 
 ```bash
-bash <this skill's directory>/scripts/confirm-handback.sh <project> <issue-iid>
+bash <this skill's directory>/scripts/poll-issue.sh handback <project> <issue-iid>
 ```
 
 - **0** → unassigned and at `state::needsReview`. Continue.
 - **6** → not both within the wait. Tell the user and point at the issue; do **not** post again.
 - **5** → your own user could not be read, so nothing was confirmed. Tell the user to check the issue by hand; do **not** post again.
+- **7** → never raised by `handback`; treat it like **6**.
 
 Remove the worktree and local branch:
 
@@ -371,7 +366,7 @@ git remote remove fork-issue-<issue-iid>
 
 ### 10. Tell the user what is left
 
-Reply (not on the issue) with the links, the posted summary, and a human todo list. Credit is always on it: it needs an attribution record via the issue's "Issue tools" link (no `/do:` or API), else the user earns nothing.
+Reply (not on the issue) with the links, the posted summary, and a human todo list. Credit is always on it: there is no `/do:` or API for it.
 
 > Done: https://git.drupalcode.org/\<namespace\>/\<project\>/-/merge_requests/\<mr-iid\>
 > Issue: https://git.drupalcode.org/\<namespace\>/\<project\>/-/work_items/\<issue-iid\>
@@ -389,17 +384,13 @@ List only what is outstanding; only the first two appear every run.
 ## Rules
 
 - One issue per run; for more, see [Repeated runs](#repeated-runs).
-- Only claim issues you reported, unless the user names one.
-- Finish what is already claimed before claiming more: a `resume` outranks a `ready`.
 - Push to the issue's `fork-issue-<issue-iid>` remote, never to `upstream`, and never with a force other than `--force-with-lease`.
 - Never rewrite or revert another contributor's commits; a conflict with their work is a Step 8 park.
 - All git operations run in the issue's worktree, never the base clone.
 - Post only: the claim, the un-park, the scripts' fork and access commands, one parking question, one handback.
 - A run ends parked (assigned, `state::blocked`, a question) or handed back (unassigned, `state::needsReview`, a merge request) — never in between, except when CI is unreadable or still running (Step 7).
-- Every merge request description is one short paragraph, `Closes #<issue-iid>`, and `AI-Generated: Yes`. Drupal.org [requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal); never drop it.
-- Every run ends with the Step 10 todo list, contribution credit first.
+- Never drop `AI-Generated: Yes` from a merge request description: drupal.org's [AI policy](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) requires disclosure.
 - Never set `state::rtbc`, never approve, and never merge.
-- Commit messages are one line: `Issue #<issue-id>: <short description>`.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

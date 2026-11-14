@@ -4,21 +4,13 @@
 #
 # Usage: bash scripts/post-inline-comment.sh <project> <mr-iid> <path> <new-line> <body-file> [old-line]
 #
-# The body comes from a file rather than an argument: review comments are markdown, and
-# passing them through the shell mangles backticks, newlines and quotes. A body that
-# begins with `@` must come from a file too - `glab api -F` reads a leading `@` as a
-# filename - which is the other reason this takes no inline body.
+# The body comes from a file: markdown mangles through the shell, and `glab api -F` reads
+# a leading `@` as a filename. Uses the discussions API because glab still labels
+# `glab mr note create --file/--line` experimental.
 #
-# Uses the discussions API rather than `glab mr note create --file/--line`, which glab
-# still labels an experiment that "might be unstable or removed at any time".
-#
-# Positions are the fiddly part, so they are assembled here from the merge request's own
-# `diff_refs`:
-#   * An *added* line exists only on the new side: pass <new-line>, omit [old-line].
-#   * A *context* line exists on both sides and GitLab rejects it unless both are given:
-#     pass [old-line] as well. Diff hunk headers (@@ -a,b +c,d @@) carry both numbers.
-#   * <path> is the new path. A renamed file needs its old path too; this script does not
-#     cover that case - comment on it at file level instead.
+# An *added* line needs only <new-line>. A *context* line exists on both sides and GitLab
+# rejects it without [old-line] too; the hunk header (@@ -a,b +c,d @@) has both. Renamed
+# files are not covered - comment on those at file level.
 #
 # Exit codes:
 #   0  Posted. The discussion id is printed.
@@ -35,7 +27,6 @@ if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
@@ -61,12 +52,9 @@ BASE_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.base_sha')
 START_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.start_sha')
 HEAD_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.head_sha')
 
-# `position` is a nested object, and `--field`/`--raw-field` cannot express one: they
-# send `position[base_sha]` as a literal key name, which GitLab silently ignores. The
-# POST then succeeds, returns 201, and creates an ordinary comment in the Overview tab
-# with no position at all - the worst outcome available, because nothing reports an
-# error. So the body goes as real JSON through `--input`, with the Content-Type that
-# `--input` does not set on its own.
+# `--field position[base_sha]=...` is sent as a literal key that GitLab ignores, so the
+# POST returns 201 with an unpositioned Overview comment and no error. Send real JSON
+# through `--input`, with the Content-Type it does not set on its own.
 PAYLOAD=$(jq -n \
     --rawfile body "$BODY_FILE" \
     --arg base_sha "$BASE_SHA" \
@@ -88,9 +76,8 @@ PAYLOAD=$(jq -n \
         } + (if $old_line == "" then {} else {old_line: ($old_line | tonumber)} end))
     }')
 
-# glab's stderr is kept apart from the response: a warning it prints on success would
-# otherwise make the JSON unparseable, and the post would read as failed and be retried
-# into a duplicate thread. It is only worth showing when the post did fail.
+# glab's stderr is kept apart: a warning on success would make the JSON unparseable,
+# read as a failure, and be retried into a duplicate thread.
 ERR=$(mktemp)
 trap 'rm -f "$ERR"' EXIT
 if ! RESPONSE=$(printf '%s' "$PAYLOAD" | api --method POST \
@@ -102,9 +89,7 @@ if ! RESPONSE=$(printf '%s' "$PAYLOAD" | api --method POST \
     exit 1
 fi
 
-# 201 is not proof. A dropped position yields a DiscussionNote rather than a DiffNote,
-# so the thread exists but sits in the Overview tab instead of on the line - which reads
-# as success to anything that only checks the exit status. Confirm what was created.
+# 201 is not proof: a dropped position yields a DiscussionNote, not a DiffNote.
 if [ "$(printf '%s' "$RESPONSE" | jq -r '[.notes[]? | select(.type == "DiffNote")] | length')" = "0" ]; then
     printf '%s\n' "$RESPONSE" >&2
     echo "the thread was created without a position, so it is not on the diff:" \

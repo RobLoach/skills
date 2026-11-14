@@ -5,13 +5,10 @@
 #
 # Usage: bash scripts/resolve-threads.sh <project> <mr-iid> <sha-or-message> <discussion-id>...
 #
-# A commit SHA (7 to 40 hex characters) becomes the reply "Resolved in <sha>."; anything
-# else is posted as the reply verbatim. Plain text only: it is sent with `-f`, so a
-# leading `@` is not read as a file.
-#
-# Replying first and resolving second leaves a trail: a thread resolved silently tells
-# the next reader nothing about where its fix went. A thread already resolved is skipped
-# rather than replied to again, so a rerun after a partial failure posts no duplicates.
+# A commit SHA (7 to 40 hex) becomes "Resolved in <sha>."; anything else is the reply
+# verbatim, sent with `-f` so a leading `@` is not read as a file. Replying before
+# resolving leaves a trail of where the fix went. Already-resolved threads are skipped,
+# so a rerun posts no duplicates.
 #
 # Exit codes:
 #   0  Every thread named is resolved, by this run or an earlier one.
@@ -27,7 +24,6 @@ if [ "$#" -lt 4 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
@@ -48,10 +44,7 @@ fi
 
 FAILED=0
 for ID in "$@"; do
-    # Two steps: a 404 here is an answer to report, not a reason to end the run.
-    if ! RESOLVED=$(api "$MR_PATH/discussions/$ID" 2>/dev/null | jq -r '.notes[0].resolved'); then
-        RESOLVED=
-    fi
+    RESOLVED=$(api "$MR_PATH/discussions/$ID" 2>/dev/null | jq -r '.notes[0].resolved') || RESOLVED=
     case $RESOLVED in
         true)
             echo "$ID: already resolved"
@@ -77,6 +70,4 @@ for ID in "$@"; do
     echo "$ID: resolved"
 done
 
-if [ "$FAILED" -ne 0 ]; then
-    exit 1
-fi
+[ "$FAILED" -eq 0 ] || exit 1

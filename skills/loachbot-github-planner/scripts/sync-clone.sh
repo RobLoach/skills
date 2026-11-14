@@ -4,20 +4,13 @@
 #
 # Usage: bash scripts/sync-clone.sh <owner> <repo>
 #
-# Clones into ~/Projects/<owner>/<repo> (or LOACHBOT_PROJECTS_DIR) if it isn't there yet,
-# otherwise checks out origin/<default> as a detached HEAD. Planning only reads code, so
-# no local branch is moved or reset: resetting the local default branch would discard
-# commits on it that were never pushed, and HEAD being elsewhere would hide them from
-# any check against HEAD. Local work is never clobbered: uncommitted or untracked files,
-# or commits that only a detached HEAD holds, stop the run instead, since notes, an
-# experiment or a stash-in-progress are the user's to deal with, not this skill's. That
-# path is just as likely to be the user's own clone as a scratch one, so the bar is
-# deliberately low.
+# Checks out origin/<default> detached rather than moving a branch: resetting the local
+# default branch would discard unpushed commits on it. The path may be the user's own
+# clone, so any local work - uncommitted or untracked files, or commits only a detached
+# HEAD holds - stops the run instead.
 #
-# Planning reads code, it does not build it, so a first clone fetches blobs lazily and
-# skips submodules: --recurse-submodules spent minutes on ones like libretro-database.
-# A clone that already has submodules initialized keeps them in step, or the next run
-# would see them as local changes.
+# A first clone is blobless and skips submodules: --recurse-submodules spent minutes on
+# ones like libretro-database. Already-initialized submodules are kept in step.
 #
 # Exit codes:
 #   0  Clean and current. Stdout is the clone path, and nothing else.
@@ -36,8 +29,7 @@ OWNER=$1
 REPO=$2
 BASE="${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/$OWNER/$REPO"
 
-# git checkout chats on stdout, and the caller captures stdout as the path
-# without a pipe (a pipe would hide exit 5), so everything but the path goes to stderr.
+# stdout is the path alone: git's chatter goes to stderr.
 exec 3>&1 1>&2
 
 if [ ! -d "$BASE" ]; then

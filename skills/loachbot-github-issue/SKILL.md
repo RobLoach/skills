@@ -1,6 +1,6 @@
 ---
 name: loachbot-github-issue
-description: Fix the most recently updated GitHub issue that you created and is assigned to you - implement it in a worktree, open a Pull Request, get CI green, then unassign the issue. Use when the user wants to work through their own assigned GitHub issues, fix the next one, or asks to "run LoachBot Issues", including repeated runs like "six times" or "until there aren't any left".
+description: Fix the most recently updated GitHub issue that you created and is assigned to you - open a Pull Request, get CI green, then unassign the issue. Use when the user wants to work through their own assigned GitHub issues, fix the next one, or asks to "run LoachBot Issues", including repeated runs like "six times" or "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-github-issue/SKILL.md
@@ -27,9 +27,9 @@ Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this s
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -40,7 +40,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: repeated-runs -->
@@ -140,8 +140,10 @@ cd "$WT"
 ```
 
 - **3** — the rebase conflicted and was aborted. [Park](#parking) it; never work in a half-rebased worktree.
-- **9** — a submodule could not be fetched (stderr names it); the worktree is still usable. If the fix does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
-- Any other non-zero — stderr names the failing command. Report it and stop; do not force through.
+<!-- SHARED: github-worktree-exit-9 -->
+- **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the work does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
+- Any other non-zero → stderr names the failing command. Report it and stop; do not force through.
+<!-- /SHARED: github-worktree-exit-9 -->
 
 Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then review `git status --short` and stage only the files the fix meant to change: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them.
 
@@ -181,15 +183,13 @@ Verify CI (the script waits up to about 30 minutes):
 bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER"
 ```
 
+<!-- SHARED: github-wait-for-checks -->
 - **0** → passed, or no CI. Continue.
-- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning; a later run picks it up.
-- **1** → a check failed or was cancelled. Get the run id from `gh pr checks "$PR_NUMBER" --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning while red; if still red or it needs human judgment, [park](#parking) it.
+- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
+- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+<!-- /SHARED: github-wait-for-checks -->
 
-### 4. When the task is unclear
-
-[Park](#parking) it.
-
-### 5. Un-assign when done
+### 4. Un-assign when done
 
 Un-assign silently, then remove the worktree and its already-pushed local branch:
 
@@ -206,7 +206,7 @@ Report the PR to the user:
 ## Rules
 
 - One issue per run; for more, see [Repeated runs](#repeated-runs).
-- Never comment except to ask for clarification ([Parking](#parking)).
+- Never comment except to ask for clarification; when the task is unclear, [park](#parking) it.
 - Run all git operations for an issue inside its worktree; never `git checkout` or commit in the base clone, which stays on the default branch.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.

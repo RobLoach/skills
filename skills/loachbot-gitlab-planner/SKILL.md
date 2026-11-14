@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-planner
-description: Plan the next issues for a drupal.org project (module, theme or Drupal core) by reading its code, issue queue, branches and CI, then propose a prioritized, branch-targeted plan and file the approved issues in its GitLab queue. For GitHub repositories use loachbot-github-planner instead. Use when the user wants to plan upcoming work on a drupal.org project, build a roadmap for a contrib module, decide what to work on next there, or asks to "run LoachBot GitLab Planner" or "plan issues" for a drupal.org project.
+description: Plan the next issues for a drupal.org project (module, theme or Drupal core) by reading its code, issue queue, branches and CI, then propose a prioritized, branch-targeted plan and file the approved issues in its GitLab queue. For GitHub repositories use loachbot-github-planner instead. Use when the user wants to plan upcoming work on a drupal.org project, build a roadmap for a contrib module, or asks to "run LoachBot GitLab Planner" or "plan issues" for a drupal.org project.
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-planner/SKILL.md
@@ -32,9 +32,9 @@ Scripts live in `scripts/` beside this file, run as `bash <this skill's director
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -45,15 +45,14 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 ## How drupal.org differs
 
-- **Two hostnames.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Mixing them fails. Take clone URLs from the API's `ssh_url_to_repo`.
 - **The queue is in one of two places.** Most contrib queues migrated into GitLab as *work items* at `/-/work_items/<iid>`. Drupal core and a few others (`eck`) stayed on drupal.org, which has no API to file against. Step 3 settles which.
-- **A release is a branch.** Contrib carries a branch per minor (`1.4.x`, `1.5.x`), the default branch ahead of the newest supported one, and a tag per release. The same fix on `1.4.x` and on the default branch is two pieces of work, so each issue names its branch.
-- **Metadata is the project's own labels.** drupal.org's GitLab uses `category::bug|feature|task|support|plan`, `priority::critical|major|normal|minor`, `state::*` and `why::*`, but which exist and how they are spelled varies. Step 3 reads the real list; Step 7 applies nothing outside it.
+- **A release is a branch.** Contrib carries a branch per minor (`1.4.x`, `1.5.x`) plus the default branch; the same fix on two branches is two pieces of work, so each issue names its branch.
+- **Metadata is the project's own labels** (`category::`, `priority::`, `state::`, `why::`), whose spelling varies per project; Step 3 reads the real list.
 
 `glab api`: `-f` sends a plain string, `-F` reads `@path` as file contents.
 
@@ -128,9 +127,9 @@ Fan the reads out across concurrent sub-agents per [Sub-agents](#sub-agents) and
 
 Three drupal.org-specific sources of well-scoped issues:
 
-- **Core compatibility.** `core_version_requirement` against the current and next Drupal major, plus `@deprecated` usage. A module that stops installing on the next major is the biggest risk.
-- **Forgiven CI jobs that are red.** The CI template marks `phpcs`, `phpstan`, `cspell` and `eslint` `allow_failure: true`, so a green pipeline can hide them. Read the newest default-branch pipeline job by job; each red one is a ready-made issue.
-- **Release hygiene.** Compare `tags` with the default branch: far ahead of the newest tag means unreleased work, a plan item of its own.
+- **Core compatibility.** `core_version_requirement` against the current and next Drupal major, plus `@deprecated` usage; not installing on the next major is the biggest risk.
+- **Forgiven CI jobs that are red.** Read the newest default-branch pipeline job by job (`allow_failure: true` hides them); each red one is a ready-made issue.
+- **Release hygiene.** A default branch far ahead of the newest of `tags` is unreleased work, a plan item of its own.
 
 ### 5. Establish goals and current state
 
@@ -162,7 +161,7 @@ Present the plan as an ordered list, highest return on investment first, each wi
 
 Make each approved issue self-contained: carry Step 4's grounding (paths, line references, commits, links), Step 5's reason, and dependencies on issues filed earlier in this run by number (`Blocked by #3615838`). Include facts from memory or notes only if fit for a public queue: no client or personal details, credentials or internal URLs.
 
-Write the body to a file (the shell mangles markdown backticks and newlines), using drupal.org's issue summary headings. It ends with `AI-Generated: Yes`: drupal.org [requires the disclosure](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal), and a maintainer may decline an issue without it.
+Write the body to a file (the shell mangles markdown backticks and newlines), using drupal.org's issue summary headings. It ends with `AI-Generated: Yes`: drupal.org's [AI policy](https://www.drupal.org/docs/develop/issues/issue-procedures-and-etiquette/policy-on-the-use-of-ai-when-contributing-to-drupal) requires disclosure.
 
 ```bash
 cat > <tmp>/planned-issue.md <<'EOF'
@@ -196,7 +195,7 @@ glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>
     jq -r '"\(.web_url) iid=\(.iid) labels=\(.labels | join(","))"'
 ```
 
-GitLab silently drops labels a non-member may not set, so check the `labels=` it echoes. Apply any missing ones through drupalbot, one verbatim `/do:` line each, as the other LoachBot skills do:
+GitLab silently drops labels a non-member may not set, so check the `labels=` it echoes. Apply any missing ones through drupalbot, one verbatim `/do:` line each:
 
 ```bash
 glab issue note <new-iid> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'

@@ -27,9 +27,9 @@ Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this s
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -40,7 +40,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 ## Workflow
@@ -135,13 +135,7 @@ gh search issues --repo <owner>/<repo> --limit 10 "<two or three keywords from t
     --json number,title,state,url --jq '.[] | "#\(.number) [\(.state)] \(.title)"'
 ```
 
-Drop the candidate if any existing item:
-
-- addresses the same root cause or code location
-- has the same fix or goal, even under a different title
-- is already merged or in a PR that would make it redundant
-
-When in doubt, drop it rather than file a near-duplicate. On a fresh pass, also drop anything already proposed in this conversation.
+Drop the candidate if any existing item, merged PR or open PR covers the same root cause, code location, fix or goal, whatever its title. When in doubt, drop it. On a fresh pass, also drop anything already proposed in this conversation.
 
 Keep the candidates that missed the cut: a follow-up "anything else?" draws from them first.
 
@@ -177,5 +171,4 @@ Report each created issue URL in plan order. Leave the rest unfiled.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->
-- A plan is ordered and justified, not a pile of ideas: every issue has a priority and a place in the sequence.
 - Prefer five sharp issues over ten vague ones. Ground each in something concrete (a file path, a commit, a TODO, a missing test); no generic items like "add more tests."

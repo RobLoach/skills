@@ -5,9 +5,9 @@
 #
 # Usage: bash scripts/setup-plan-worktree.sh <project>
 #
-# The base clone is shared with loachbot-gitlab-issue and loachbot-gitlab-mr, so its own
-# checkout is never touched: only a fetch, and a worktree beside it. Clone URL from the
-# API's ssh_url_to_repo, since git.drupalcode.org (API) and git.drupal.org (git) differ.
+# The base clone is shared with the other GitLab skills, so its checkout is never
+# touched. The clone URL comes from the API, since git.drupalcode.org (API) and
+# git.drupal.org (git) differ.
 #
 # Exit codes:
 #   0  stdout is the worktree path.
@@ -26,7 +26,6 @@ NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 BASE=${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/$1
 WT=$BASE.worktrees/plan
 
-# Two steps: `glab api` exits non-zero on a 404, which `set -e` would turn into a silent end.
 META=$(glab api --hostname "$HOST" "projects/$NAMESPACE%2F$1" 2>/dev/null) || META=null
 URL=$(printf '%s' "$META" | jq -r '.ssh_url_to_repo // empty')
 DEFAULT=$(printf '%s' "$META" | jq -r '.default_branch // empty')

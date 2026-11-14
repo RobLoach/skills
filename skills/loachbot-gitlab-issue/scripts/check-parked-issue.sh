@@ -4,26 +4,13 @@
 #
 # Usage: bash scripts/check-parked-issue.sh <project> <issue-iid>
 #
-# loachbot-github-issue and loachbot-gitlab-mr park their work by appending
-# " (Needs Info)" to a title they own. An issue in somebody else's queue is not a title
-# to rewrite, so this skill parks with drupal.org's own `state::blocked` label instead.
-# That costs nothing in the issue queue, where the label is what a human already reads
-# to mean "waiting on something", and it is removed with /do:unlabel when the answer
-# arrives.
+# An issue in somebody else's queue is not a title to rewrite, so this skill parks with
+# `state::blocked` rather than a " (Needs Info)" suffix. The label alone cannot be the
+# marker - maintainers set it for their own reasons, and it carries no timestamp - so the
+# marker is your own comment carrying the /do:label command, question and command in one.
 #
-# The label alone cannot be the marker, for two reasons. A maintainer applies
-# `state::blocked` for their own reasons, and a label carries no timestamp a reply can
-# be measured against. So the marker is the parking *comment*: a note of your own
-# carrying the /do:label command that applied the label. Question and command go in one
-# comment, which is also why this needs none of the comment-then-rename ordering care
-# its siblings document - there is only ever one event to be newest.
-#
-# A reply is any later comment by somebody else. Your own notes are excluded, so a
-# summary you post afterwards cannot un-park your own question, and drupalbot's are
-# excluded because acknowledging a command is not an answer. Other project bots do
-# comment on drupal.org issues and are not reliably named, so an automated triage note
-# can still surface here as a reply - which is why the caller reads what is printed and
-# decides whether it answers the question, rather than treating exit 0 as a green light.
+# A reply is a later comment by anyone but you or drupalbot. Other bots are not reliably
+# named and can still surface as replies, so read what is printed before acting on it.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line. Read them: they are
@@ -40,7 +27,6 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
@@ -52,12 +38,7 @@ if ! ME=$(api user 2>/dev/null | jq -r '.username // empty') || [ -z "$ME" ]; th
     exit 5
 fi
 
-# Taken in two steps so the type check below is what reports an unreadable issue:
-# `glab api` exits non-zero on a 404, and under `set -e` that would end the run here
-# with no explanation of which read failed.
-#
-# --paginate prints one array per page, 20 notes to a page by default, so slurp them
-# into one: a busy thread would otherwise read as unparseable and be skipped as unreadable.
+# --paginate prints one array per page; slurp them into one.
 NOTES=$(api --paginate \
     "projects/$NAMESPACE%2F$PROJECT/issues/$IID/notes?sort=asc&order_by=created_at&per_page=100" \
     2>/dev/null | jq -sc 'add') ||
@@ -68,9 +49,8 @@ if [ "$(printf '%s' "${NOTES:-null}" | jq -r 'type')" != "array" ]; then
     exit 5
 fi
 
-# An issue can be parked, answered and re-parked any number of times; the most recent
-# parking comment wins. drupalbot rewrites a /do: comment in place to append its own
-# result, so match the command loosely rather than anchoring it.
+# The most recent parking comment wins. drupalbot rewrites a /do: comment in place to
+# append its result, so the command is matched loosely rather than anchored.
 PARKED=$(printf '%s' "$NOTES" | jq -r --arg me "$ME" '
     map(select(.system == false
                and .author.username == $me

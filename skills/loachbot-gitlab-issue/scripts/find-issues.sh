@@ -1,30 +1,20 @@
 #!/usr/bin/env bash
 #
-# List the open drupal.org issues you reported that this skill could pick up, sorted
-# into the three kinds worth looking at, most recently updated first.
+# List the open drupal.org issues you reported that this skill could pick up, most
+# recently updated first.
 #
 # Usage: bash scripts/find-issues.sh [project]
 #
 # Prints one line per candidate:
 #   <kind>\t<namespace>/<project>#<iid>\tmrs=<count>\t[<labels>]\t<title>
 #
-#   resume  assigned to you, at an open state: an earlier run claimed it and stopped
-#           before opening a merge request. Finish these first.
-#   ready   unassigned, at an open state: the ordinary candidate.
-#   parked  assigned to you and `state::blocked`: an earlier run asked a question.
+#   resume  assigned to you, at an open state: an earlier run stopped before an MR.
+#   ready   unassigned, at an open state.
+#   parked  assigned to you and `state::blocked`.
 #
-# Only issues you reported, because the skill claims what it picks and claiming
-# somebody else's queue uninvited is not its call to make.
-#
-# The state test is an allowlist. `state::needsReview`, `state::rtbc`, `state::fixed`,
-# `state::postponed` and the `state::closed*` family all mean the issue is not waiting
-# on code, and a label nobody has invented yet means something this skill has never
-# heard of - so anything outside `state::accepted` and `state::needsWork` is left alone
-# rather than guessed at. An issue with no `state::` label at all passes, which is the
-# usual state of a freshly reported one.
-#
-# Every issue this search returns lives in GitLab by definition, so none of them can be
-# a drupal.org-only issue the skill has no way to claim.
+# Only issues you reported: claiming somebody else's queue uninvited is not this skill's
+# call. "Open state" is an allowlist - no `state::` label, `state::accepted` or
+# `state::needsWork` - so a label nobody has invented yet is left alone, not guessed at.
 #
 # Exit codes:
 #   0  Candidates printed.
@@ -39,12 +29,10 @@ if [ "$#" -gt 1 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 SCOPE=$NAMESPACE/
-# A named project is asked directly rather than filtered out of the global search: that
-# search returns your issues from every project, and one busy elsewhere would push this
-# project's off the page.
+# A named project is asked directly: in the global search, issues elsewhere could push
+# this project's off the page.
 ENDPOINT="issues?scope=all&"
 if [ "$#" -eq 1 ]; then
     SCOPE="$NAMESPACE/$1#"

@@ -1,50 +1,24 @@
 #!/usr/bin/env bash
 #
-# SHARED: duplicated verbatim across skills, because each skill directory is
-# installed on its own. Keep every copy identical.
+# SHARED: each skill installs alone, so every copy must stay identical.
 #
 # Read the issue behind a merge request, from whichever of drupal.org's two worlds it
 # actually lives in.
 #
 # Usage: bash scripts/read-issue.sh <project> <issue-ref>
 #
-# <issue-ref> is the number from the issue fork's path - the tail of
-# issue/<project>-<number>. What that number *means* depends on the project, which is
-# the whole reason this script exists:
+# <issue-ref> is the number from the fork's path, issue/<project>-<number>. In a project
+# whose queue migrated to GitLab it is an issue iid; in one that never did (core, eck)
+# it is a drupal.org node id. The two numbering spaces overlap - ai_ckeditor's GitLab
+# issue 3615852 and drupal.org node 3615852 are unrelated - so trying both and keeping
+# whichever answers returns a confident, wrong requirement. The world is decided first,
+# from whether the project has GitLab issues at all, and a drupal.org node must also name
+# the project asked about.
 #
-#   * A project whose issues were migrated into GitLab (most of contrib) numbers them
-#     itself. The fork's number is a GitLab issue iid.
-#   * A project whose issues were never migrated - Drupal core and eck among them -
-#     keeps its queue on drupal.org only. The fork's number is a drupal.org node id.
-#
-# The two numbering spaces overlap, and that is a trap rather than a convenience:
-# ai_ckeditor's GitLab issue 3615852 is "Uninstalling ai_ckeditor leaves stale toolbar
-# items"; drupal.org's *node* 3615852 is an unrelated Drupal core issue about
-# ConfigManager. Trying one number against both places and keeping whichever answers
-# therefore does not degrade gracefully - it returns a confident, wrong requirement to
-# review a merge request against. So the world is decided first, from whether the
-# project has GitLab issues at all, and only then is the number interpreted.
-#
-# As a second guard, an issue read from drupal.org must name the project it was asked
-# about. A mismatch means the number was interpreted in the wrong world and is reported
-# rather than returned.
-#
-# Emits one JSON object:
-#   {
-#     "source":     "gitlab" | "drupal.org",
-#     "ref":        the number as given,
-#     "title":      string,
-#     "status":     human-readable where known, else the raw value,
-#     "actionable": false when the issue is fixed, closed, postponed or RTBC - do not
-#                   force-push over it and do not pick it up,
-#     "writable":   true when /do: commands can be posted from here. False for
-#                   drupal.org-only issues: those move state through the web UI, so the
-#                   handback has to go to the user instead,
-#     "url":        where a human should look,
-#     "labels":     [string],   # GitLab only, empty otherwise
-#     "version":    string,     # drupal.org only, empty otherwise
-#     "description": string
-#   }
+# Emits one JSON object: source ("gitlab" | "drupal.org"), ref, title, status,
+# actionable (false when fixed, closed, postponed or RTBC), writable (false for
+# drupal.org-only issues, whose state moves through the web UI), url, labels (GitLab
+# only), version (drupal.org only), description.
 #
 # Exit codes:
 #   0  Issue read. JSON on stdout.
@@ -61,7 +35,6 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 REF=$2
@@ -82,12 +55,9 @@ if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
         echo "$NAMESPACE/$PROJECT keeps its issues in GitLab, but issue $REF is not there" >&2
         exit 6
     fi
-    # The settled states are matched by prefix rather than by exact name: drupal.org
-    # spells a label more than one way across projects - project/ai carries
-    # `state::needs review`, `state::needs_review` and `state::needsReview` at once - so
-    # an exact list would silently miss a variant and report finished work as actionable.
-    # `state::needsReview` is deliberately absent: an issue awaiting review is still
-    # waiting on code if that review asks for more.
+    # Matched by prefix: one project can spell a label several ways (project/ai has
+    # `state::needs review`, `state::needs_review` and `state::needsReview`).
+    # `state::needsReview` is deliberately absent: a review may ask for more code.
     printf '%s' "$ISSUE" | jq -c --arg ref "$REF" '{
         source: "gitlab",
         ref: $ref,
@@ -109,8 +79,6 @@ if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
     exit 0
 fi
 
-# Not migrated: the fork's number is a drupal.org node id, and drupal.org is the only
-# place the issue exists.
 if ! command -v drupalorg >/dev/null 2>&1; then
     echo "$NAMESPACE/$PROJECT keeps its issues on drupal.org, which needs the drupalorg CLI" >&2
     echo "install it from https://github.com/mglaman/drupalorg-cli" >&2
@@ -131,8 +99,6 @@ if [ "$NODE_PROJECT" != "$PROJECT" ]; then
 fi
 
 # Status codes are drupal.org's own and stable; the names are what its UI shows.
-# Actionable means someone is still expected to work on it: anything fixed, closed,
-# postponed or already reviewed-and-tested is not for this run to touch.
 printf '%s' "$NODE" | jq -c --arg ref "$REF" '
     (.field_issue_status | tonumber? // -1) as $s |
     {

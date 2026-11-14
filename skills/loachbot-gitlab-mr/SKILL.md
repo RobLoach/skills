@@ -1,6 +1,6 @@
 ---
 name: loachbot-gitlab-mr
-description: Rebase a drupal.org merge request onto its target branch, resolve conflicts, and make every CI job green - including the lint jobs drupal.org's pipeline forgives behind a green badge - then hand it back for review. Takes the merge request you name, or searches your own open ones. Use when the user wants to rebase a drupal.org merge request, fix merge conflicts on one, fix pipeline or cspell/phpcs/phpstan/phpunit failures, or asks to "run LoachBot MRs", including repeated runs like "five times" or "until there aren't any left".
+description: Rebase a drupal.org merge request onto its target branch, resolve conflicts, and make every CI job green - including forgiven lint jobs behind a green badge - then hand it back for review. Takes the merge request you name, or searches your own open ones. Use when the user wants to rebase a drupal.org merge request, fix merge conflicts on one, fix pipeline or cspell/phpcs/phpstan/phpunit failures, or asks to "run LoachBot MRs", including repeated runs like "five times" or "until there aren't any left".
 metadata:
     author: RobLoach
     homepage: https://github.com/RobLoach/skills/blob/main/skills/loachbot-gitlab-mr/SKILL.md
@@ -32,9 +32,9 @@ Scripts live in `scripts/` beside this file, run as `bash <this skill's director
 <!-- SHARED: sub-agents -->
 ## Sub-agents
 
-Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search and edit. Delegate whenever you would read a file to learn how something works, run more than two searches, make a change that needs more than a sentence to describe, or run a build, tests or a linter and react to its output.
+Delegate by default. The main thread picks the work, runs `gh`/`glab` and `git`, and reports to the user; sub-agents read, search, edit, and run builds, tests and linters.
 
-Use read-only investigators for questions and editing agents for changes. Launch read-only ones together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
+Launch read-only sub-agents together in one message; they cannot collide. Keep sequential only writes (`git`, builds, formatters, codegen) and sub-agents that need an earlier answer.
 
 Sub-agents start empty, so every prompt carries:
 
@@ -45,7 +45,7 @@ Sub-agents start empty, so every prompt carries:
 5. What to report: files touched, output, anything left undone.
 6. "Do not commit, push, or open a Pull Request."
 
-Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same: a report sent while helpers still run is unfinished work.
+Verify what matters in a report: read the diff or re-run the command. Wait for every sub-agent you launched before reporting, and tell sub-agents that launch their own helpers to do the same.
 <!-- /SHARED: sub-agents -->
 
 <!-- SHARED: repeated-runs -->
@@ -62,18 +62,14 @@ When the user asks for several runs ("five times", "until there aren't any left"
 <!-- SHARED: drupal-gotchas -->
 ## How drupal.org differs
 
-Four things here break GitLab habits, quietly. Know them before the first API call.
-
 - **Two hostnames, one service.** The API is at `git.drupalcode.org`; git is at `git.drupal.org`. Each fails on the other's host, so take remote URLs from the API's `ssh_url_to_repo` instead of composing them.
-- **Two repositories per merge request.** It targets `project/<project>`, but its branch lives in the per-issue fork `issue/<project>-<issue-id>`. Push to the fork.
-- **The pipeline is on the fork, except when it isn't.** GitLab runs a fork's merge request pipeline in the *parent* project when the author can push there: a maintainer's runs on the project, a contributor's on the fork. The wrong one returns a flat `404`. Read `head_pipeline.project_id` from a single-merge-request read; fall back to `source_project_id` only if it is missing.
-- **A green pipeline can hide red jobs.** Drupal.org's CI template sets `allow_failure: true` on some jobs, so they fail while the pipeline, badge and `glab ci status` report success. Which jobs varies per project: usually the lint jobs (`cspell`, `phpcs`, `phpstan`, `stylelint`), sometimes `eslint`, `composer` or even `phpunit` variants. Never match on job names: read each job's `allow_failure` and treat a forgiven failure as a failure.
+- **Two repositories per merge request**: it targets `project/<project>`, but its branch lives in the fork `issue/<project>-<issue-id>`; push to the fork.
+- **The pipeline may be on the fork or the parent project.** Use `head_pipeline.project_id` from a single-merge-request read (fall back to `source_project_id`); the wrong one returns a flat `404`.
+- **A green pipeline can hide red jobs**: never match on job names; read each job's `allow_failure` and treat a forgiven failure as a failure.
 
 ### The issue lives in one of two places
 
-A merge request's issue number is the tail of its fork path: `issue/ai_ckeditor-3615852` means `3615852`. It is a GitLab issue iid where the queue was migrated, a drupal.org node id where it wasn't (Drupal core and `eck` among them). The numbering spaces overlap, so the wrong world returns a real but unrelated issue.
-
-Never try both and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number; its header explains why:
+Never try both GitLab and drupal.org and keep whichever answers. `read-issue.sh` decides the world first, then interprets the number:
 
 ```bash
 bash <this skill's directory>/scripts/read-issue.sh <project> <issue-ref>
@@ -88,10 +84,7 @@ It returns one JSON object either way (`source`, `title`, `status`, `actionable`
 Two `glab api` habits: `-f` sends a plain string while `-F` types its value and reads `@path` as a file's contents; `--paginate` prints one JSON array per page, so merge them with `jq -s 'add'`.
 <!-- /SHARED: drupal-gotchas -->
 
-Two more matter for rebasing:
-
-- **`has_conflicts` and `detailed_merge_status` are unreliable.** They sit at `unchecked` indefinitely, so filtering on them finds nothing. Step 3's local rebase discovers conflicts.
-- **The forgiven jobs are most of what this skill is for.** A merge request whose only problem is a red `cspell`, or a forgiven `phpunit` variant, looks finished from every angle but the one that counts.
+`has_conflicts` and `detailed_merge_status` are unreliable: they sit at `unchecked` indefinitely, so Step 3's local rebase discovers conflicts.
 
 ## Workflow
 
@@ -125,7 +118,7 @@ Act on its exit code:
 - **6** → nobody has answered yet. Skip it.
 - **5** → the merge request could not be read, or the suffix was added by hand. Skip it and tell the user.
 
-Skip it when its issue is settled: RTBC means somebody is waiting to commit and a force-push would reset that; fixed, closed or postponed means it is not yours. Take the issue number from the source fork's path, not the branch name, which contributors rename. Only an `issue/` fork carries one:
+Skip it when its issue is settled (RTBC, fixed, closed or postponed): a force-push would reset an RTBC. Take the issue number from the source fork's path, not the branch name, which contributors rename. Only an `issue/` fork carries one:
 
 ```bash
 SOURCE_ID=$(glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>/merge_requests/<iid>" |
@@ -195,25 +188,27 @@ git push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
 ```
 
+<!-- SHARED: gitlab-wait-for-pipeline -->
 Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
 - **0** → every job passed, or the commit configures no CI. Continue.
-- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per Step 5. `+` lines are a log diff with numbers masked: a lead, not a verdict.
-- **2** → every failure also fails on the target branch. Fix nothing; name them as pre-existing in the handback.
+- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them as pre-existing in the handback instead of "the pipeline is green".
 - **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
-- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back; a later run picks it up.
+- **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back.
 
 The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
 
-Read a failing job's log before guessing from its name, from the pipeline project the wait prints (not always the fork):
+Read a failing job's log before guessing from its name, from the pipeline project the wait prints (it may be the parent, not the fork):
 
 ```bash
 bash <this skill's directory>/scripts/job-log.sh <pipeline-project> <job-id>
 ```
 
-Exit **7** means the wrong project or job id: check both. Then reproduce it locally, per [Running tests locally](#running-tests-locally).
+Exit **7** means the wrong project or job id: check both. Then reproduce it locally before pushing a guess.
+<!-- /SHARED: gitlab-wait-for-pipeline -->
 
 <!-- SHARED: local-tests -->
 #### Running tests locally
@@ -269,7 +264,7 @@ EOF
 )"
 ```
 
-Remove the worktree and its local branch; the work is pushed:
+Remove the worktree and its local branch (after a port, use the cleanup in [Porting a merge request](#porting-a-merge-request) instead); the work is pushed:
 
 ```bash
 cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
@@ -306,13 +301,21 @@ glab api --hostname git.drupalcode.org -X POST "projects/$SOURCE_ID/merge_reques
     -f "title=<original title> (<branch>)" -F "description=@<tmp>/mr-description.md" | jq -r '.web_url'
 ```
 
-Then Steps 4 and 6 on the new merge request, still pushing to `fork-mr-<iid>`: the original's remote, on the same fork.
+Then Steps 4 and 6 on the new merge request, still pushing to `fork-mr-<iid>`: the original's remote, on the same fork. Clean up both worktrees, since setup also made `mr-<iid>`:
+
+```bash
+cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
+git worktree remove "$WT" --force
+git worktree remove "$PWD.worktrees/mr-<iid>" --force
+git branch -D port-<iid>-<branch> mr-<iid>
+git remote remove fork-mr-<iid>
+```
 
 For a big forward-port, first triage the candidate commits (already on the target, applies cleanly, needs adapting, not applicable) in parallel read-only [sub-agents](#sub-agents), one per slice, then cherry-pick only what they cleared.
 
 ## Rules
 
-- One merge request per run; for more, see [Repeated runs](#repeated-runs). Within a run, delegate per [Sub-agents](#sub-agents); the main thread keeps orchestration, git, push and handback.
+- One merge request per run; for more, see [Repeated runs](#repeated-runs).
 - Push to the merge request's `fork-mr-<iid>` remote, never `upstream`. `--force-with-lease` is the only acceptable force.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.

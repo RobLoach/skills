@@ -4,42 +4,20 @@
 #
 # Usage: bash scripts/ensure-fork.sh <project> <issue-iid>
 #
-# <project> is the project's machine name - "ai_ckeditor", not "project/ai_ckeditor".
+# Every issue has one shared fork at issue/<project>-<issue-iid>. A contributor who is not
+# a project member cannot create it or join it through the API, so this asks drupalbot -
+# /do:fork creates it with <issue-iid>-issue-branch, /do:access grants push - and polls,
+# since both are queued rather than answered.
 #
-# Drupal.org has no personal forks. Every issue gets one shared fork at
-# issue/<project>-<issue-iid>, and everyone working the issue pushes to that. Creating
-# it and getting push access are both done by commenting at drupalbot rather than
-# through the GitLab API, because the API would refuse: a contributor who is not a
-# member of the project cannot fork it, and cannot add themselves to the fork either.
-# So this posts the two commands drupal.org provides for exactly that and then waits for
-# the bot to act:
+# A fork this run created is also waited on until its import finishes and
+# <issue-iid>-issue-branch exists: a worktree set up before then has no tracking ref, and
+# the first --force-with-lease push is rejected as stale once the branch lands.
 #
-#   /do:fork     creates the fork and a <issue-iid>-issue-branch off the default branch
-#   /do:access   grants the commenting user push access to the existing fork
+# A 404 is confirmed by a second read before /do:fork is posted, so one dropped
+# connection cannot put a duplicate fork request on the issue.
 #
-# Both are asynchronous. Observed latency is a few seconds, but it is a queue rather
-# than a request/response, so this polls instead of assuming.
-#
-# A fork that exists is not yet a fork that is ready. GitLab copies the repository in
-# the background, and /do:fork pushes <issue-iid>-issue-branch only after that, so a
-# worktree set up in between fetches no such branch. The first `--force-with-lease`
-# push then has no tracking ref to lease against and is rejected as stale once the
-# branch lands. So a fork this run created is waited on until its import has finished
-# and that branch exists.
-#
-# Posting /do:fork at an issue that already has one is the one way this script could
-# make a mess that a human has to look at, so a 404 is confirmed by a second read before
-# anything is written. One dropped connection should not produce a comment.
-#
-# Emits one JSON object:
-#   {
-#     "fork_path":    "issue/<project>-<issue-iid>",
-#     "fork_id":      number,
-#     "fork_ssh_url": the git.drupal.org URL to push to,
-#     "created":      true when this run asked drupalbot to create the fork,
-#     "access_via":   "existing" when you could already push, "comment" when /do:access
-#                     earned it
-#   }
+# Emits one JSON object: fork_path, fork_id, fork_ssh_url (the git.drupal.org URL to push
+# to), created (this run asked for the fork), access_via ("existing" | "comment").
 #
 # Exit codes:
 #   0  The fork exists and you have push access. JSON on stdout.
@@ -56,13 +34,11 @@ if [ "$#" -ne 2 ]; then
 fi
 
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
-# drupal.org keeps contrib under project/, but its sandboxes live under sandbox/.
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
 
-# Issue forks live under issue/ whatever namespace the parent sits in, so this one is
-# not configurable alongside the others.
+# Issue forks live under issue/ whatever namespace the parent sits in.
 FORK_PATH="issue/$PROJECT-$IID"
 FORK_ENC="issue%2F$PROJECT-$IID"
 
@@ -74,12 +50,8 @@ MIN_ACCESS=30
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-# A missing fork is the expected case here, not an error, and `glab api` reports a 404
-# by exiting non-zero - which under `set -e -o pipefail` would end the run before it
-# could do anything about it. So every read whose absence is meaningful is taken in two
-# steps, and an unreadable response is fed to jq as `null` rather than as nothing: jq
-# emits no output at all for empty input, and an empty string would then flow on into a
-# numeric comparison as a syntax error.
+# An unreadable response is fed to jq as `null` rather than nothing: jq prints nothing
+# for empty input, and an empty string would then break a numeric comparison.
 read_fork() {
     local json=''
     json=$(api "projects/$FORK_ENC" 2>/dev/null) || json=''
@@ -101,7 +73,6 @@ CREATED=false
 FORK_ID=$(read_fork)
 
 if [ -z "$FORK_ID" ]; then
-    # Confirm before writing: see the note above about not commenting on a blip.
     sleep "$POLL_SECONDS"
     FORK_ID=$(read_fork)
 fi
@@ -122,8 +93,7 @@ if [ -z "$FORK_ID" ]; then
     exit 6
 fi
 
-# "none" is what a project that was never imported reports, which is the steady state
-# of a fork whose copy finished long ago.
+# "none" is the steady state of a fork whose copy finished long ago.
 fork_ready() {
     local json=''
     json=$(api "projects/$FORK_ID" 2>/dev/null) || json=''
@@ -155,23 +125,13 @@ elif ! FORK_SSH_URL=$(api "projects/$FORK_ID" 2>/dev/null | jq -r '.ssh_url_to_r
     exit 5
 fi
 
-# members/all rather than members: push access is often inherited from the parent
-# project rather than granted on the fork, and plain members cannot see that. A
-# non-member reads as a 404, so this answers 0 rather than failing.
+# members/all, because push access is often inherited from the parent project. A
+# non-member is a 404, which answers 0.
 my_access() {
     local json=''
     json=$(api "projects/$FORK_ID/members/all/$MY_ID" 2>/dev/null) || json=''
     printf '%s' "${json:-null}" |
         jq -r 'if type == "object" then (.access_level // 0) else 0 end'
-}
-
-wait_for_access() {
-    for _ in $(seq 1 "$MAX_POLLS"); do
-        sleep "$POLL_SECONDS"
-        ACCESS=$(my_access)
-        [ "$ACCESS" -ge "$MIN_ACCESS" ] && return 0
-    done
-    return 1
 }
 
 ACCESS_VIA=existing
@@ -180,8 +140,12 @@ ACCESS=$(my_access)
 if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
     echo "no push access to $FORK_PATH (access level $ACCESS); asking drupalbot with /do:access" >&2
     glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:access" >&2
-    wait_for_access || true
     ACCESS_VIA=comment
+    for _ in $(seq 1 "$MAX_POLLS"); do
+        sleep "$POLL_SECONDS"
+        ACCESS=$(my_access)
+        [ "$ACCESS" -ge "$MIN_ACCESS" ] && break
+    done
 fi
 
 if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
