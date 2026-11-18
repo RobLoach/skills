@@ -2,18 +2,24 @@
 """Validate every skill in skills/ before it reaches anyone's agent.
 
 Checks, per skill:
-  * SKILL.md exists and opens with a parseable `---` frontmatter block
+  * SKILL.md exists and opens with a `---` frontmatter block that real YAML loaders accept
   * frontmatter carries `name` and `description`, within the limits agents enforce
-  * `name` matches the directory it lives in, and the `homepage` URL points at itself
-  * every ```bash block parses under `bash -n`, once <placeholders> are substituted
+  * `name` matches the directory, `metadata.homepage` is exactly this skill's GitHub URL,
+    and no `github-*` metadata keys (added by `gh skills install`) are committed
+  * every ```bash, ```sh and ```shell block parses under `bash -n`, once <placeholders>
+    are substituted - in every SKILL.md, README.md and AGENTS.md
   * every scripts/*.sh referenced by SKILL.md exists, and none sit there unreferenced
   * scripts marked `# SHARED:` are byte-identical in every skill that carries a copy
   * a script's `Exit codes:` block lists exactly the codes it really exits with
-  * SKILL.md says what to do about every exit code its scripts can hand back
-  * SKILL.md sections marked `<!-- SHARED: -->` are identical wherever they appear
+  * SKILL.md says what to do about every exit code a script can hand back, at every
+    place the script is called
+  * SKILL.md sections marked `<!-- SHARED: -->` are well-formed, paired, unnested, used
+    by at least two skills, and identical wherever they appear
+  * README.md names every skill as `/<name>`, and its `#anchor` links resolve
   * scripts start with a shebang and pass shellcheck, when shellcheck is installed
 
-Deliberately dependency-free, so it runs the same way in CI and on a laptop.
+Needs only python3. PyYAML is used as an extra frontmatter check when importable; the
+built-in parser is stricter than YAML, so results do not depend on it being there.
 Run from the repository root. Exits 1 if anything failed.
 """
 
@@ -24,12 +30,29 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import yaml  # type: ignore[import-untyped]
+except ImportError:  # Optional: the built-in parser below is the real gate.
+    yaml = None
+
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 NAME_MAX = 64
 DESCRIPTION_MAX = 1024
 PLACEHOLDER_RE = re.compile(r"<[^>\n]+>")
-BASH_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
-SHARED_OPEN_RE = re.compile(r"^<!-- SHARED: (?P<name>[^>\n]+?) -->$", re.MULTILINE)
+SHELL_BLOCK_RE = re.compile(
+    r"^[ \t]*```(?P<lang>bash|sh|shell)[ \t]*\n(?P<body>.*?)^[ \t]*```[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
+FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
+HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t#]*$")
+SHARED_MARKER_RE = re.compile(r"^<!-- (?P<close>/?)SHARED: (?P<name>[a-z0-9]+(?:-[a-z0-9]+)*) -->$")
+# Anything that looks like it was meant to be a marker, so a typo is reported rather than
+# silently turning a shared section into an unchecked one.
+SHARED_LOOSE_RE = re.compile(r"<!--\s*/?\s*SHARED", re.IGNORECASE)
+SCRIPT_REF_RE = re.compile(r"scripts/([A-Za-z0-9._-]+\.sh)")
+HOMEPAGE = "https://github.com/RobLoach/skills/blob/main/skills/{name}/SKILL.md"
+# Characters that make a plain YAML scalar mean something else when they lead it.
+YAML_INDICATORS = "[]{},&*!|>'\"%@`#"
 
 failures: list[str] = []
 
@@ -38,10 +61,33 @@ def fail(where: object, message: str) -> None:
     failures.append(f"{where}: {message}")
 
 
-def unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
+def scalar(value: str) -> tuple[str | None, str | None]:
+    """Decode one frontmatter value, refusing anything YAML would read differently.
+
+    A plain (unquoted) scalar is easy to write wrongly: `description: Note: fix one` is
+    a YAML error, `x #y` silently loses `#y`, and a leading `&`, `*`, `|`, `>` and so on
+    change the meaning entirely. Agents load frontmatter with real YAML parsers, so any
+    of these must be quoted rather than accepted here and broken there.
+    """
+    if value[:1] in "\"'":
+        quote = value[0]
+        if len(value) < 2 or value[-1] != quote:
+            return None, f"unterminated {quote}-quoted value"
+        inner = value[1:-1]
+        if quote == "'":
+            if re.search(r"(?<!')'(?!')", inner.replace("''", "")):
+                return None, "single-quoted value has an undoubled `'` inside"
+            return inner.replace("''", "'"), None
+        if re.search(r'(?<!\\)"', inner) or "\\" in inner:
+            return None, "double-quoted value has an inner `\"` or `\\` escape; avoid both"
+        return inner, None
+    if value[:1] in YAML_INDICATORS or value[:2] in ("- ", "? ", ": "):
+        return None, f"unquoted value starts with YAML indicator {value[:1]!r}; quote it"
+    if ": " in value or value.endswith(":"):
+        return None, "unquoted value contains `: `, which YAML rejects; quote it"
+    if " #" in value or "\t#" in value:
+        return None, "unquoted value contains ` #`, which YAML reads as a comment; quote it"
+    return value, None
 
 
 def parse_frontmatter(text: str) -> tuple[dict | None, str | None]:
@@ -68,7 +114,14 @@ def parse_frontmatter(text: str) -> tuple[dict | None, str | None]:
                 "(multi-line values are not supported)"
             )
         key, _, value = line.partition(":")
-        key, value = key.strip(), unquote(value.strip())
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+            return None, f"line {lineno}: key {key!r} is not a plain identifier"
+        if value and not value[:1].isspace():
+            return None, f"line {lineno}: expected a space after `{key}:`"
+        value, problem = scalar(value.strip()) if value.strip() else ("", None)
+        if problem or value is None:
+            return None, f"line {lineno}: {key}: {problem}"
         if raw[:1].isspace():
             if parent is None:
                 return None, f"line {lineno}: indented {key!r} sits under no parent key"
@@ -79,20 +132,58 @@ def parse_frontmatter(text: str) -> tuple[dict | None, str | None]:
         else:
             data[key] = {}
             parent = key
+
+    if yaml is not None:
+        # Belt and braces: whatever the parser above accepted, a real loader must too.
+        try:
+            loaded = yaml.safe_load(text[4:end])
+        except yaml.YAMLError as error:
+            return None, f"YAML loader rejects the frontmatter: {error}".replace("\n", " ")
+        if not isinstance(loaded, dict):
+            return None, "frontmatter does not load as a YAML mapping"
     return data, None
 
 
 def check_bash_blocks(path: Path, text: str) -> None:
-    """Every documented snippet should at least be syntactically valid bash."""
-    for index, block in enumerate(BASH_BLOCK_RE.findall(text), start=1):
+    """Every documented shell snippet should at least be syntactically valid bash."""
+    for index, match in enumerate(SHELL_BLOCK_RE.finditer(text), start=1):
         # <owner>, <number>, <this skill's directory> and friends are stand-ins the
         # agent substitutes; swap in a token so bash can parse the shape.
-        candidate = PLACEHOLDER_RE.sub("PLACEHOLDER", block)
+        candidate = PLACEHOLDER_RE.sub("PLACEHOLDER", match.group("body"))
         result = subprocess.run(
             ["bash", "-n"], input=candidate, capture_output=True, text=True
         )
         if result.returncode != 0:
-            fail(path, f"bash block {index} is not valid bash: {result.stderr.strip()}")
+            line = text.count("\n", 0, match.start()) + 1
+            fail(
+                f"{path}:{line}",
+                f"{match.group('lang')} block {index} is not valid bash: "
+                f"{result.stderr.strip()}",
+            )
+
+
+def headings(text: str) -> list[tuple[int, int, str]]:
+    """(offset, level, title) for every Markdown heading outside a code fence.
+
+    `# comment` lines inside a bash block, and `### Problem/Motivation` inside an issue
+    template, are not headings - so fences have to be tracked rather than grepped past.
+    """
+    found = []
+    offset = 0
+    fence: str | None = None
+    for line in text.split("\n"):
+        opener = FENCE_RE.match(line)
+        if opener:
+            if fence is None:
+                fence = opener.group(1)
+            elif opener.group(1) == fence:
+                fence = None
+        elif fence is None:
+            heading = HEADING_RE.match(line)
+            if heading:
+                found.append((offset, len(heading.group(1)), heading.group(2)))
+        offset += len(line) + 1
+    return found
 
 
 def check_frontmatter(skill_dir: Path, skill_md: Path, text: str) -> None:
@@ -122,14 +213,24 @@ def check_frontmatter(skill_dir: Path, skill_md: Path, text: str) -> None:
         )
 
     metadata = meta.get("metadata")
-    homepage = metadata.get("homepage") if isinstance(metadata, dict) else None
-    if homepage and skill_dir.name not in homepage:
-        fail(skill_md, f"`homepage` does not point at this skill: {homepage}")
+    if not isinstance(metadata, dict):
+        fail(skill_md, "frontmatter is missing a `metadata` block")
+        metadata = {}
+    expected = HOMEPAGE.format(name=skill_dir.name)
+    homepage = metadata.get("homepage")
+    if homepage != expected:
+        fail(skill_md, f"`metadata.homepage` is {homepage!r}, expected {expected}")
+    for key in sorted([*meta, *metadata]):
+        if key.startswith("github-"):
+            fail(
+                skill_md,
+                f"`{key}` is added by `gh skills install`, and must not be committed",
+            )
 
 
 def check_scripts(skill_dir: Path, text: str) -> None:
     scripts_dir = skill_dir / "scripts"
-    referenced = set(re.findall(r"scripts/([A-Za-z0-9._-]+\.sh)", text))
+    referenced = set(SCRIPT_REF_RE.findall(text))
 
     for name in sorted(referenced):
         if not (scripts_dir / name).is_file():
@@ -175,32 +276,67 @@ def check_shared_sections(skill_dirs: list[Path]) -> None:
     """A SKILL.md block marked `<!-- SHARED: -->` must be identical wherever it appears.
 
     Skills are standalone copies, not includes of one source, so shared guidance
-    drifts a sentence at a time unless something holds the copies together.
+    drifts a sentence at a time unless something holds the copies together. That only
+    works if every marker is seen: a malformed one, an unpaired one, or a name only one
+    skill uses would each let a section drift with nothing compared, so all of those
+    fail rather than pass quietly.
     """
     by_name: dict[str, dict[Path, str]] = {}
+    broken = len(failures)
 
     for skill_dir in skill_dirs:
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             continue
         text = skill_md.read_text()
-        for opening in SHARED_OPEN_RE.finditer(text):
-            name = opening.group("name")
-            close_re = re.compile(
-                rf"^<!-- /SHARED: {re.escape(name)} -->$", re.MULTILINE
-            )
-            closing = close_re.search(text, opening.end())
-            if closing is None:
-                fail(skill_md, f"missing closing `<!-- /SHARED: {name} -->`")
+        lines = text.split("\n")
+        open_name: str | None = None
+        open_line = 0
+        for lineno, line in enumerate(lines, start=1):
+            if not SHARED_LOOSE_RE.search(line):
+                continue
+            where = f"{skill_md}:{lineno}"
+            marker = SHARED_MARKER_RE.match(line)
+            if marker is None:
+                fail(
+                    where,
+                    f"malformed SHARED marker {line!r}; expected exactly "
+                    "`<!-- SHARED: name -->` or `<!-- /SHARED: name -->` on its own line",
+                )
+                continue
+            name = marker.group("name")
+            if not marker.group("close"):
+                if open_name is not None:
+                    fail(where, f"SHARED {name} opens inside {open_name} (line {open_line}); nesting is not allowed")
+                    continue
+                open_name, open_line = name, lineno
+                continue
+            if open_name is None:
+                fail(where, f"`<!-- /SHARED: {name} -->` closes a section that was never opened")
+                continue
+            if name != open_name:
+                fail(where, f"`<!-- /SHARED: {name} -->` closes {open_name}, opened on line {open_line}")
+                open_name = None  # Treat it as closed, so one typo is one failure.
                 continue
             copies = by_name.setdefault(name, {})
             if skill_md in copies:
-                fail(skill_md, f"SHARED section {name} appears more than once")
-                continue
-            copies[skill_md] = text[opening.start() : closing.end()]
+                fail(where, f"SHARED section {name} appears more than once")
+            else:
+                copies[skill_md] = "\n".join(lines[open_line - 1 : lineno])
+            open_name = None
+        if open_name is not None:
+            fail(f"{skill_md}:{open_line}", f"SHARED {open_name} is never closed")
 
+    # A broken marker usually strands its partners as one-offs; report the cause alone.
+    broken = len(failures) > broken
     for name, copies in sorted(by_name.items()):
         first, *rest = sorted(copies)
+        if not rest and not broken:
+            fail(
+                first,
+                f"SHARED section {name} appears in no other SKILL.md, so nothing "
+                "holds it to anything; share it or drop the markers",
+            )
         for other in rest:
             if copies[first] != copies[other]:
                 fail(other, f"differs from {first}; SHARED copies of {name} must match")
@@ -278,34 +414,37 @@ def check_handled_exit_codes(skill_dirs: list[Path]) -> None:
     file alone - the script documents the code, the SKILL.md documents a workflow - and is
     only visible by comparing the two.
 
-    A script's codes are matched against the prose that follows its *own* invocation,
-    bounded by the next script invocation or the next `###` heading, so a step that runs
-    two scripts does not credit one with the other's bullets. Both bullet lists
-    (`- **4** - ...`) and inline prose ("exit **5** means") count; the agent reads either.
+    Every place a SKILL.md names `scripts/<name>.sh` is a call site, and each one is
+    checked on its own: the agent acts on the prose beside the call it is making, not on
+    bullets two steps away. A call site's region runs to the next call site of any script,
+    or to the next heading at the same or a higher level than the one it sits under -
+    so a `####` subsection still belongs to its step, and a step that runs two scripts
+    does not credit one with the other's bullets. Both bullet lists (`- **4** - ...`)
+    and inline prose ("exit **5** means") count; the agent reads either.
 
-    The same two escapes as above apply, for the same reasons: a region saying "any other
-    non-zero" has covered everything by definition, and a script that passes another
-    command's code through can hand back codes no list could enumerate.
+    The same two escapes as above apply, per region and for the same reasons: a region
+    saying "any other non-zero" has covered everything by definition, and a script that
+    passes another command's code through can hand back codes no list could enumerate.
     """
     for skill_dir in skill_dirs:
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.is_file():
             continue
         text = skill_md.read_text()
+        heads = headings(text)
+        calls = [(m.start(), m.group(1)) for m in SCRIPT_REF_RE.finditer(text)]
 
-        # Every script invocation and heading, in document order, so each region can be
-        # cut at whichever comes next.
-        marks = sorted(
-            [(m.start(), m.group(1)) for m in re.finditer(r"scripts/([A-Za-z0-9._-]+\.sh)", text)]
-            + [(m.start(), None) for m in re.finditer(r"^### ", text, re.MULTILINE)]
-        )
-
-        regions: dict[str, str] = {}
-        for index, (start, name) in enumerate(marks):
-            if name is None:
-                continue
-            end = marks[index + 1][0] if index + 1 < len(marks) else len(text)
-            regions[name] = regions.get(name, "") + text[start:end]
+        regions: dict[str, list[tuple[int, str]]] = {}
+        for index, (start, name) in enumerate(calls):
+            enclosing = [level for offset, level, _ in heads if offset < start]
+            level = enclosing[-1] if enclosing else 6
+            end = calls[index + 1][0] if index + 1 < len(calls) else len(text)
+            for offset, head_level, _ in heads:
+                if start < offset < end and head_level <= level:
+                    end = offset
+                    break
+            line = text.count("\n", 0, start) + 1
+            regions.setdefault(name, []).append((line, text[start:end]))
 
         for script in sorted((skill_dir / "scripts").glob("*.sh")):
             body = script.read_text()
@@ -313,8 +452,6 @@ def check_handled_exit_codes(skill_dirs: list[Path]) -> None:
                 line for line in body.split("\n") if not line.lstrip().startswith("#")
             )
             raised = {int(m) for m in re.findall(r"\bexit\s+(\d+)\b", code)} - {0, 64}
-            if not raised:
-                continue
 
             header = re.search(r"^# Exit codes:\n(?P<body>(?:#.*\n)+)", body, re.MULTILINE)
             if header and re.search(r"\bexit\s+\"?\$", code):
@@ -322,20 +459,47 @@ def check_handled_exit_codes(skill_dirs: list[Path]) -> None:
                 raised |= {
                     int(m) for m in re.findall(r"^#\s+(\d+)\s", header.group("body"), re.MULTILINE)
                 } - {0, 64}
-
-            region = regions.get(script.name)
-            if region is None:
-                continue  # check_scripts already reports an unreferenced script.
-            if "any other non-zero" in region.lower():
+            if not raised:
                 continue
 
-            handled = {int(m) for m in re.findall(r"\*\*(\d+)\*\*", region)}
-            for missing in sorted(raised - handled):
-                fail(
-                    skill_md,
-                    f"scripts/{script.name} can exit {missing}, but SKILL.md never says "
-                    "what the agent should do about it",
-                )
+            # A script nobody references is reported by check_scripts already.
+            for line, region in regions.get(script.name, []):
+                if "any other non-zero" in region.lower():
+                    continue
+                handled = {int(m) for m in re.findall(r"\*\*(\d+)\*\*", region)}
+                for missing in sorted(raised - handled):
+                    fail(
+                        f"{skill_md}:{line}",
+                        f"scripts/{script.name} can exit {missing}, but nothing after "
+                        "this call says what the agent should do about it",
+                    )
+
+
+def slug(title: str) -> str:
+    """GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens."""
+    title = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title)  # [text](url) -> text
+    title = re.sub(r"<[^>]+>", "", title)
+    return re.sub(r"[^\w\- ]", "", title.strip().lower()).replace(" ", "-")
+
+
+def check_readme(readme: Path, skill_dirs: list[Path]) -> None:
+    """README.md is the install page: every skill on it, and no link that goes nowhere."""
+    text = readme.read_text()
+    for skill_dir in skill_dirs:
+        if not re.search(rf"/{re.escape(skill_dir.name)}(?![a-z0-9-])", text):
+            fail(readme, f"never mentions `/{skill_dir.name}`; list it with the slash commands")
+
+    anchors: set[str] = set()
+    seen: dict[str, int] = {}
+    for _, _, title in headings(text):
+        base = slug(title)
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        anchors.add(base if count == 0 else f"{base}-{count}")
+    for match in re.finditer(r"\]\(#([^)\s]+)\)", text):
+        if match.group(1) not in anchors:
+            line = text.count("\n", 0, match.start()) + 1
+            fail(f"{readme}:{line}", f"link to #{match.group(1)} matches no heading")
 
 
 def shellcheck_usable() -> bool:
@@ -400,6 +564,12 @@ def main() -> int:
     readme = root / "README.md"
     if readme.is_file():
         check_bash_blocks(readme, readme.read_text())
+        check_readme(readme, skill_dirs)
+    else:
+        fail(readme, "missing")
+    agents = root / "AGENTS.md"
+    if agents.is_file():
+        check_bash_blocks(agents, agents.read_text())
 
     if failures:
         print(f"{len(failures)} problem(s) found:\n", file=sys.stderr)

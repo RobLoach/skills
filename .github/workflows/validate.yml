@@ -9,15 +9,32 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned, so a runner image update can't change what passes. Bump both together:
+  # the digest is on the release page, next to each asset.
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+
 jobs:
   skills:
     name: Validate skills
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check ShellCheck is available
-        run: shellcheck --version
+      - name: Install ShellCheck ${{ env.SHELLCHECK_VERSION }}
+        run: |
+          tarball="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSLo "$RUNNER_TEMP/$tarball" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$tarball"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
+
+      # The validator skips ShellCheck when it is missing, so fail here instead.
+      - name: Check ShellCheck is the pinned version
+        run: |
+          shellcheck --version | grep -Fx "version: ${SHELLCHECK_VERSION#v}"
 
       - name: Validate skills
         run: python3 .github/scripts/validate-skills.py

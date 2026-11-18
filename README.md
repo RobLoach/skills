@@ -227,7 +227,7 @@ A reaction works on every kind of feedback, not just inline threads, and survive
 
 **Do the GitLab skills work on Drupal core, whose issues are still on drupal.org?**
 
-Mostly. The skills detect where a project's issues live and read them with the `drupalorg` CLI (required; they stop without it). The MR Fixer and Reviewer work normally; the Planner hands you its plan to file by hand; the Issue Fixer can't claim with `/do:assign me` there, so it stops. Status changes on those projects are left to you.
+Mostly. The skills detect where a project's issues live and read them there with the `drupalorg` CLI. The MR Fixer and Reviewer work normally, but need `drupalorg` to read the issue, and stop without it. The Planner hands you its plan to file by hand; without `drupalorg` it still plans, but says no duplicate check was possible. The Issue Fixer can't claim with `/do:assign me` there, so it stops either way. Status changes on those projects are left to you.
 
 **My drupal.org pipeline is green. Why do the GitLab skills say a job failed?**
 
