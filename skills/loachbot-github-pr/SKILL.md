@@ -21,6 +21,8 @@ metadata:
 
 The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
+Each block runs in a fresh shell: variables and `cd` from an earlier block are gone, and a sub-agent may not keep the working directory either. So a step that sets something up prints it, and later blocks name it as a `<placeholder>` (`<worktree-path>`, `<pr-number>`) to replace with the literal value printed, never a shell variable.
+
 Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 <!-- /SHARED: conventions -->
 
@@ -115,19 +117,29 @@ Report the URL immediately:
 
 ### 2. Check out the pull request in a dedicated worktree
 
+Find where the PR's head can be pushed. Not from the checkout's tracking config: for a fork PR without maintainer edits, `gh pr checkout` tracks `refs/pull/<number>/head`, which cannot be pushed to.
+
 ```bash
-# A failed command substitution leaves WT empty and `cd ""` succeeds, so read the exit
-# code before moving anywhere; 9 still prints a usable path.
-WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> pr <number>) && RC=0 || RC=$?
-echo "setup-github-worktree.sh exited $RC"
-if [ "$RC" -eq 0 ] || [ "$RC" -eq 9 ]; then
-    cd "$WT"
-    # A fork's branch may be renamed <owner>/<branch> and track the fork by URL, where a
-    # bare `git push` refuses; Step 4 pushes to the PR head these name instead.
-    PUSH_REMOTE=$(git config "branch.$(git branch --show-current).remote")
-    PUSH_REF=$(git config "branch.$(git branch --show-current).merge")
-fi
+gh api user --jq '"me=\(.login)"'
+# Same-repository heads push to origin; a fork's to its URL. A deleted fork has no
+# headRepository, so push_url comes back empty.
+gh pr view <number> --repo <owner>/<repo> \
+    --json headRepositoryOwner,headRepository,headRefName,maintainerCanModify,isCrossRepository \
+    --jq '"cross=\(.isCrossRepository) can_modify=\(.maintainerCanModify) head_owner=\(.headRepositoryOwner.login)",
+          "push_url=\(if .isCrossRepository | not then "origin"
+                      elif .headRepository then "https://github.com/\(.headRepositoryOwner.login)/\(.headRepository.name).git"
+                      else "" end)",
+          "push_ref=refs/heads/\(.headRefName)"'
 ```
+
+Note `push_url=` as `<push-url>` and `push_ref=` as `<push-ref>`. If `push_url` is empty (the fork is gone), or `cross=true` with `can_modify=false` and `head_owner` is not `me`, nothing here can push to the PR. [Park](#parking) it without a worktree, asking the fork's owner to enable "Allow edits by maintainers" (or restore the fork); parking keeps the next run from picking it again.
+
+```bash
+bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> pr <number>
+echo "setup-github-worktree.sh exited $?"
+```
+
+On **0** or **9**, note the worktree path it prints on stdout as `<worktree-path>`, and its branch (`git -C <worktree-path> branch --show-current`, possibly renamed `<owner>/<branch>` for a fork) as `<local-branch>` for Step 6.
 
 - **4** → another worktree (named on stderr) has the PR branch checked out, possibly the user's own. Report it and stop; never remove it or force-switch branches across worktrees.
 <!-- SHARED: github-worktree-exit-9 -->
@@ -155,20 +167,25 @@ If there is nothing to address (no un-🚀'd comment, and no review summary with
 
 ### 4. Do the work
 
-Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; independent comments run concurrently.
+Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `<worktree-path>` and the proving command; independent comments run concurrently.
 
 Test where possible, then review `git status --short` and stage only the files the change meant to touch: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them. Commit and push to the PR head from Step 2:
 
 ```bash
+cd <worktree-path> || exit 1
 git add <paths>
 # Skip the empty commit when no code changed.
 if ! git diff --cached --quiet; then
     git commit -m "<one-line message>"
-    git push "$PUSH_REMOTE" "HEAD:$PUSH_REF"
+    # Anything but a branch (a pull ref, a tag) is not the PR's head.
+    case "<push-ref>" in
+        refs/heads/*) git push "<push-url>" "HEAD:<push-ref>" ;;
+        *) echo "refusing to push to <push-ref>: not a branch" >&2; exit 1 ;;
+    esac
 fi
 ```
 
-A comment asking to fix conflicts means rebase, never merge: note the PR head first (`gh pr view <number> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`), `git fetch origin`, `git rebase origin/<base>` where `<base>` is `gh pr view <number> --json baseRefName --jq .baseRefName`, then `git push --force-with-lease="$PUSH_REF:<noted head>" "$PUSH_REMOTE" "HEAD:$PUSH_REF"` (a plain push is refused after a rebase, and a bare `--force-with-lease` is refused for a fork tracked by URL, which has no remote-tracking ref to compare). Regenerate conflicting generated or built files with the project's build rather than hand-merging them. If a conflict needs judgment, `git rebase --abort` and leave the comment unreacted.
+A comment asking to fix conflicts means rebase, never merge: note the PR head first (`gh pr view <number> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`), then in the worktree `git fetch origin` and `git rebase origin/<base>`, where `<base>` is `gh pr view <number> --repo <owner>/<repo> --json baseRefName --jq .baseRefName`. Push with `git push --force-with-lease="<push-ref>:<noted head>" "<push-url>" "HEAD:<push-ref>"`, after the same `refs/heads/` check: a plain push is refused after a rebase, and the noted head, unlike `origin/<branch>` that a fetch moves, makes a human's push since then refuse the lease rather than be overwritten. If it is refused, report it and stop; never fetch and retry. Regenerate conflicting generated or built files with the project's build rather than hand-merging them. If a conflict needs judgment, `git rebase --abort` and leave the comment unreacted.
 
 A comment asking for a change in another repository (e.g. an upstream library) gets its own PR there. Work in a new worktree off that repo's base clone `<other-owner>/<other-repo>` under the projects directory (cloned if missing); never in a local clone with uncommitted work. Open the PR, link it in a reply to the comment ending with the hidden `<!-- loachbot:reply -->` marker (the reply is posted as you, so without it a later run reads it as new feedback), react 🚀 and remove that worktree; do not wait on its CI.
 
@@ -190,17 +207,17 @@ If the work deviates from the PR title or body, update them to match.
 
 ### 5. Verify CI before marking ready
 
-Waits up to about 30 minutes:
-
 ```bash
 # The pushed SHA keeps the previous commit's green checks from passing for this one.
-bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number> "$(git rev-parse HEAD)"
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number> "$(git -C <worktree-path> rev-parse HEAD)"
 ```
 
 <!-- SHARED: github-wait-for-checks -->
+Run it with a 600000 ms tool timeout: it ends within `LOACHBOT_CHECKS_CEILING` (9 minutes), and a shorter limit kills it before it can exit with a code.
+
 - **0** → passed, or no CI. Continue.
-- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
-- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **8** → still pending, or status unreadable (stderr says which), when the call ended. Run it again; after three runs, report the pending checks and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
+- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push as above. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
 - **7** → nothing failed, but a check was cancelled or is waiting on approval (action required); there is no log to fix. Once per run, re-run each such run (id from the same `link`) with `gh run rerun <run-id> --repo <owner>/<repo>` and wait again. If it returns 7 again, report the checks and the PR URL, then stop without un-assigning or marking ready.
 <!-- /SHARED: github-wait-for-checks -->
 
@@ -208,10 +225,9 @@ bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
 
 ```bash
 gh pr ready <number> --repo <owner>/<repo>
-BRANCH=$(git rev-parse --abbrev-ref HEAD)   # capture while still inside the worktree
-cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
-git worktree remove "$WT" --force
-git branch -D "$BRANCH"
+BASE="${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
+git -C "$BASE" worktree remove <worktree-path> --force
+git -C "$BASE" branch -D "<local-branch>"
 ```
 
 Then report:
@@ -224,6 +240,7 @@ List the `html_url` of any comment left unreacted (Step 4) under the Done line; 
 - One Pull Request per run; for more, see [Repeated runs](#repeated-runs).
 - Never post comments except the single [parking](#parking) question and a reply linking a PR opened in another repository (Step 4); otherwise only react, rename, and update the PR title or body to match the work (Step 4).
 - Run all git operations for a PR inside its worktree; never `git checkout`, `gh pr checkout` or commit in the base clone, which stays on the default branch.
+- Push only to the PR's head, `<push-ref>` under `refs/heads/`; force only after a rebase, leased against the head you noted.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

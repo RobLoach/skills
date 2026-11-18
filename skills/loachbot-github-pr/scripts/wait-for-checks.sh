@@ -23,12 +23,16 @@
 # Cancelled and action-required checks (gh files the latter under `fail`) have no
 # failure log to fix, so they get their own code instead of sending the caller to edit.
 #
+# LOACHBOT_CHECKS_CEILING (default 540) bounds the whole wait, checked before every sleep:
+# an agent's tool call is killed at 10 minutes, and a killed call hands back no exit code
+# at all. A long CI therefore takes several calls, each ending in 8.
+#
 # Exit codes:
 #   0  Checks passed, or the repository has no CI at all. Soft-failed steps, if any, are
 #      listed first - passing here means the checks are green, not that nothing failed.
-#   8  Unsettled: still pending after the full wait, the PR head never reached
+#   8  Unsettled: still pending when the time ran out, the PR head never reached
 #      head-sha, or the status could not be read at all (API failure, auth, unexpected
-#      output); stderr says which. Unknown is not passing.
+#      output); stderr says which. Unknown is not passing. Run it again.
 #   1  At least one check failed.
 #   7  Nothing failed, but at least one check was cancelled or is waiting on approval
 #      (action required).
@@ -45,12 +49,24 @@ REPO=$2
 NUMBER=$3
 EXPECTED=${4:-}
 
+# Both end up in API paths and comparisons, where a typo would read as "pending" forever:
+# a short SHA never equals the full headRefOid.
+case "$NUMBER" in
+    '' | *[!0-9]*) echo "<pr-number> must be numeric: $NUMBER" >&2; exit 64 ;;
+esac
+if [ -n "$EXPECTED" ] && ! [[ $EXPECTED =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[head-sha] must be a full 40-character SHA: $EXPECTED" >&2
+    exit 64
+fi
+
 ATTEMPTS=${LOACHBOT_CHECKS_ATTEMPTS:-30}
 INTERVAL=${LOACHBOT_CHECKS_INTERVAL:-60}
 EMPTY_PROBES=${LOACHBOT_CHECKS_EMPTY_PROBES:-3}
+CEILING=${LOACHBOT_CHECKS_CEILING:-540}
 
 # A non-number would surface mid-wait as a `[` error read as "pending"; 0 skips polling.
-for KNOB in "LOACHBOT_CHECKS_ATTEMPTS=$ATTEMPTS" "LOACHBOT_CHECKS_EMPTY_PROBES=$EMPTY_PROBES"; do
+for KNOB in "LOACHBOT_CHECKS_ATTEMPTS=$ATTEMPTS" "LOACHBOT_CHECKS_EMPTY_PROBES=$EMPTY_PROBES" \
+    "LOACHBOT_CHECKS_CEILING=$CEILING"; do
     case "${KNOB#*=}" in
         '' | *[!0-9]* | 0 | 0*) echo "${KNOB%%=*} must be an integer >= 1" >&2; exit 64 ;;
     esac
@@ -63,16 +79,26 @@ esac
 ERR=$(mktemp)
 trap 'rm -f "$ERR"' EXIT
 
-sleep 30
+# Would sleeping $1 more seconds still end before the ceiling?
+fits() { [ $((SECONDS + $1)) -lt "$CEILING" ]; }
+
+! fits 30 || sleep 30
 
 STATUS=8
 EMPTY=0
 SEEN=0
 PROBLEM=
 ATTEMPT=0
+OUT_OF_TIME=0
 while [ "$ATTEMPT" -lt "$ATTEMPTS" ]; do
     ATTEMPT=$((ATTEMPT + 1))
-    [ "$ATTEMPT" -eq 1 ] || sleep "$INTERVAL"
+    if [ "$ATTEMPT" -gt 1 ]; then
+        if ! fits "$INTERVAL"; then
+            OUT_OF_TIME=1
+            break
+        fi
+        sleep "$INTERVAL"
+    fi
     PROBLEM=
 
     # Cleared once matched: the checks read below then belong to the expected commit.
@@ -122,6 +148,8 @@ if [ "$STATUS" -eq 8 ]; then
     if [ -n "$PROBLEM" ]; then
         printf '%s\n' "$PROBLEM" >&2
         echo "could not read the checks; not treating that as passing" >&2
+    elif [ "$OUT_OF_TIME" -eq 1 ]; then
+        echo "checks still pending at the ${CEILING}s ceiling; run this again" >&2
     else
         echo "checks still pending after the full wait" >&2
     fi

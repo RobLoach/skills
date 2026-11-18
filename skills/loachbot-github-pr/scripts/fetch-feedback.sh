@@ -54,9 +54,10 @@ HEAD_SHA=${PR%%$'\t'*}
 PR=${PR#*$'\t'}
 export HEAD_SHA
 
-# A review with no summary has a null body, not an empty one.
+# A review with no summary has a null body, not an empty one. Your own unsubmitted
+# (PENDING) review is listed to you alone; it is a draft nobody has asked for yet.
 if ! REVIEWS=$(gh api --paginate "repos/$OWNER/$REPO/pulls/$NUMBER/reviews" \
-    --jq '.[] | select(.user.login == env.AUTHOR and (.body // "") != "")
+    --jq '.[] | select(.user.login == env.AUTHOR and .state != "PENDING" and (.body // "") != "")
           | {kind: "review", id, submitted_at, body, on_head: (.commit_id == env.HEAD_SHA)}' \
     2>/dev/null); then
     echo "cannot read the reviews of $OWNER/$REPO#$NUMBER" >&2

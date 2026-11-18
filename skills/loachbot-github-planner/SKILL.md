@@ -21,6 +21,8 @@ metadata:
 
 The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
+Each block runs in a fresh shell: variables and `cd` from an earlier block are gone, and a sub-agent may not keep the working directory either. So a step that sets something up prints it, and later blocks name it as a `<placeholder>` (`<worktree-path>`, `<pr-number>`) to replace with the literal value printed, never a shell variable.
+
 Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 <!-- /SHARED: conventions -->
 
@@ -61,14 +63,12 @@ For several repos, run Steps 2-5 once per repo and present the plans together in
 Clone into `~/Projects/<owner>/<repo>`, or check out the remote default branch in an existing clone (detached, so no local branch is moved):
 
 ```bash
-# A failed command substitution leaves CLONE empty and `cd ""` succeeds, so read the
-# exit code before moving anywhere.
-CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>) && RC=0 || RC=$?
-echo "sync-clone.sh exited $RC"
-if [ "$RC" -eq 0 ]; then
-    cd "$CLONE"
-fi
+bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>
+echo "sync-clone.sh exited $?"
+gh repo view <owner>/<repo> --json defaultBranchRef --jq '"default_branch=\(.defaultBranchRef.name)"'
 ```
+
+On **0**, note the path it prints as `<clone-path>` and `default_branch=` as `<default-branch>`.
 
 - **5** → the clone holds local work (uncommitted or untracked files, or commits only a detached HEAD holds), or its `origin` is not `<owner>/<repo>` (e.g. a clone of a fork). Report what the script printed and stop. Never clobber it or re-point its remotes: it may be the user's own working clone.
 - Any other non-zero → stderr names the failing command. Report it and stop.
@@ -80,7 +80,7 @@ At minimum, read:
 - `README.md`, `CONTRIBUTING.md`, `ROADMAP.md`, `docs/` if present
 - Manifests (`package.json`, `composer.json`, `pyproject.toml`, `Cargo.toml`, etc.): purpose, deps, scripts
 - Top-level source layout: modules and what they do
-- `git log --oneline -30`: recent direction
+- `git -C <clone-path> log --oneline -30`: recent direction
 - `gh release list --repo <owner>/<repo> --limit 10`: cadence and what shipped
 - `gh issue list --repo <owner>/<repo> --limit 100 --state all`: tracked, in flight, recently closed
 - `gh pr list --repo <owner>/<repo> --limit 50 --state all`: in flight or recently merged
@@ -158,7 +158,19 @@ Present the plan ordered by return on investment. Number every list shown to the
 
 Do **not** act on any item without explicit approval. Close a triaged issue only when approved, with a comment saying why (`gh issue close <number> --repo <owner>/<repo> --comment "<why>"`).
 
-To fix or open PRs, give each item its own worktree off the default branch (`git -C "$CLONE" worktree add -b plan-<id> "$CLONE.worktrees/plan-<id>" origin/<default-branch>`), removed once done. Make one commit each, pass the project's checks, push (to the default branch, or a branch plus `gh pr create`), wait for CI green, and report the commit or PR URL.
+To fix or open PRs, give each item its own worktree off the default branch, and work in it by its literal path:
+
+```bash
+# -B: a run that stopped before cleanup left plan-<id> behind, which -b refuses.
+git -C <clone-path> worktree add -B plan-<id> <clone-path>.worktrees/plan-<id> origin/<default-branch>
+```
+
+Make one commit each, pass the project's checks, push (to the default branch, or a branch plus `gh pr create`), wait for CI green, and report the commit or PR URL. Then remove the worktree and its branch, so the next run can reuse the name:
+
+```bash
+git -C <clone-path> worktree remove <clone-path>.worktrees/plan-<id> --force
+git -C <clone-path> branch -D plan-<id>
+```
 
 #### Filing issues
 
@@ -170,7 +182,7 @@ Create them in plan order so later issues can reference earlier ones. Assign wit
 gh issue create --repo <owner>/<repo> --title "<title>" --body-file <tmp file> --assignee @me
 ```
 
-Pass `--label` only if the label exists (`gh label list --repo <owner>/<repo>`), and `--milestone` only if the milestone exists.
+Pass `--label` only if the label exists (`gh label list --repo <owner>/<repo> --limit 1000`; it lists 30 by default), and `--milestone` only if the milestone exists.
 
 Report each created issue URL in plan order. Leave the rest unfiled.
 

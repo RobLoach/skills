@@ -21,6 +21,8 @@ metadata:
 
 The `bash` blocks below are templates: substitute `<owner>`, `<repo>` and `<number>`, and adapt them to the repository.
 
+Each block runs in a fresh shell: variables and `cd` from an earlier block are gone, and a sub-agent may not keep the working directory either. So a step that sets something up prints it, and later blocks name it as a `<placeholder>` (`<worktree-path>`, `<pr-number>`) to replace with the literal value printed, never a shell variable.
+
 Longer sequences live in `scripts/` beside this `SKILL.md`, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 <!-- /SHARED: conventions -->
 
@@ -136,14 +138,11 @@ Investigate through parallel sub-agents, keeping file contents out of the main t
 ### 3. Do the work
 
 ```bash
-# A failed command substitution leaves WT empty and `cd ""` succeeds, so read the exit
-# code before moving anywhere; 9 still prints a usable path.
-WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> issue <number>) && RC=0 || RC=$?
-echo "setup-github-worktree.sh exited $RC"
-if [ "$RC" -eq 0 ] || [ "$RC" -eq 9 ]; then
-    cd "$WT"
-fi
+bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> issue <number>
+echo "setup-github-worktree.sh exited $?"
 ```
+
+On **0** or **9**, note three printed values for the blocks below: the worktree path (stdout, `<worktree-path>`), and on stderr `default_branch=` (`<default-branch>`) and `remote_sha=` (`<remote-sha>`, empty when the branch is new).
 
 - **3** → the rebase conflicted and was aborted. [Park](#parking) it; never work in a half-rebased worktree.
 <!-- SHARED: github-worktree-exit-9 -->
@@ -152,52 +151,76 @@ fi
 - Any other non-zero → stderr names the failing command. Report it and stop; do not force through.
 <!-- /SHARED: github-worktree-exit-9 -->
 
-Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Test where possible, then review `git status --short` and stage only the files the fix meant to change: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them.
+Delegate the implementation per [Sub-agents](#sub-agents), passing `<worktree-path>` and the command that proves the fix. Test where possible, then review `git status --short` and stage only the files the fix meant to change: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them.
 
 ```bash
+cd <worktree-path> || exit 1
 git add <paths>
 if ! git diff --cached --quiet; then
     git commit -m "<one-line message>"
 # A run that stopped on pending CI already pushed the fix, so the resumed branch has it.
-elif [ "$(git rev-list --count origin/<default-branch>..HEAD)" -ne 0 ]; then
+# A failed count is an error, not "no commits": it would hide that earlier fix.
+elif ! AHEAD=$(git rev-list --count "origin/<default-branch>..HEAD"); then
+    echo "cannot count the branch's commits; report it and stop" >&2
+elif [ "$AHEAD" -ne 0 ]; then
     echo "nothing new staged: the branch already carries an earlier run's fix"
 else
     echo "nothing staged: no code change was needed"
 fi
 ```
 
-If the branch already carries an earlier run's fix, continue to the push below; it reuses that run's PR and re-checks CI. If nothing was staged and the branch has no commits of its own (already fixed, or a question rather than a defect), open no Pull Request. [Park](#parking) it with a comment saying what you found, so a human decides whether to close it.
+If the count failed, report it and stop. If the branch already carries an earlier run's fix, continue to the push below; it reuses that run's PR and re-checks CI. If nothing was staged and the branch has no commits of its own (already fixed, or a question rather than a defect), open no Pull Request. [Park](#parking) it with a comment saying what you found, so a human decides whether to close it.
 
 Push and make sure a PR exists:
 
 ```bash
-# Creates the branch on a first run, replaces history a rebase rewrote, and still
-# refuses if someone else moved the branch.
-git push --force-with-lease -u origin HEAD
+cd <worktree-path> || exit 1
+# Only the issue's own branch is the bot's to rewrite.
+if [ "$(git branch --show-current)" != "fix/issue-<number>" ]; then
+    echo "not on fix/issue-<number>; refusing to push" >&2
+    exit 1
+fi
+# Forced, since setup's rebase rewrites history, but leased against <remote-sha> from
+# setup rather than origin/fix/issue-<number>, which any fetch since moves onto a
+# human's push. An empty <remote-sha> leases "must not exist yet".
+git push --force-with-lease="refs/heads/fix/issue-<number>:<remote-sha>" \
+    origin "HEAD:refs/heads/fix/issue-<number>" || exit 1
+echo "pushed=$(git rev-parse HEAD)"
 
 # Reuse an open PR from an earlier run. Keep `--head` a bare branch name; the
-# `<owner>:<branch>` form matches nothing here.
-PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""')
+# `<owner>:<branch>` form matches nothing here. A failed read is not "no PR": it would
+# open a duplicate.
+if ! PR_NUMBER=$(gh pr list --repo <owner>/<repo> --head fix/issue-<number> --state open --json number --jq '.[0].number // ""'); then
+    echo "cannot list open PRs; report it and stop" >&2
+    exit 1
+fi
 if [ -z "$PR_NUMBER" ]; then
     # Body: one short paragraph, then "Fixes #<number>". Prints the PR URL.
-    PR_URL=$(gh pr create --repo <owner>/<repo> --title "<title>" --body "<body>" --assignee @me)
+    PR_URL=$(gh pr create --repo <owner>/<repo> --head fix/issue-<number> --base <default-branch> \
+        --title "<title>" --body "<body>" --assignee @me)
     PR_NUMBER=${PR_URL##*/}
 fi
+case "$PR_NUMBER" in
+    '' | *[!0-9]*) echo "no PR number (got '$PR_NUMBER'); report it and stop" >&2; exit 1 ;;
+esac
+echo "pr_number=$PR_NUMBER"
 ```
 
-If the push fails for lack of access, [park](#parking) it; it is a permissions problem for a human, not a reason to fork.
+Note `pr_number=` as `<pr-number>`. Each later push in this run (a CI fix) uses this block again with `<remote-sha>` replaced by the last `pushed=` value, so it is leased against your own push. If the lease is refused, someone else pushed to the branch: report it and stop, never fetch and retry. If no PR number was printed, report it and stop. If the push fails for lack of access, [park](#parking) it; it is a permissions problem for a human, not a reason to fork.
 
-Verify CI (the script waits up to about 30 minutes):
+Verify CI:
 
 ```bash
 # The pushed SHA keeps the previous commit's green checks from passing for this one.
-bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER" "$(git rev-parse HEAD)"
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <pr-number> "$(git -C <worktree-path> rev-parse HEAD)"
 ```
 
 <!-- SHARED: github-wait-for-checks -->
+Run it with a 600000 ms tool timeout: it ends within `LOACHBOT_CHECKS_CEILING` (9 minutes), and a shorter limit kills it before it can exit with a code.
+
 - **0** → passed, or no CI. Continue.
-- **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
-- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **8** → still pending, or status unreadable (stderr says which), when the call ended. Run it again; after three runs, report the pending checks and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
+- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push as above. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
 - **7** → nothing failed, but a check was cancelled or is waiting on approval (action required); there is no log to fix. Once per run, re-run each such run (id from the same `link`) with `gh run rerun <run-id> --repo <owner>/<repo>` and wait again. If it returns 7 again, report the checks and the PR URL, then stop without un-assigning or marking ready.
 <!-- /SHARED: github-wait-for-checks -->
 
@@ -207,9 +230,9 @@ Un-assign silently, then remove the worktree and its already-pushed local branch
 
 ```bash
 gh issue edit <number> --repo <owner>/<repo> --remove-assignee @me
-cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
-git worktree remove "$WT" --force
-git branch -D fix/issue-<number>
+BASE="${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/<owner>/<repo>"
+git -C "$BASE" worktree remove <worktree-path> --force
+git -C "$BASE" branch -D fix/issue-<number>
 ```
 
 Report the PR to the user:
@@ -220,6 +243,7 @@ Report the PR to the user:
 - One issue per run; for more, see [Repeated runs](#repeated-runs).
 - Never comment except to ask for clarification; when the task is unclear, [park](#parking) it.
 - Run all git operations for an issue inside its worktree; never `git checkout` or commit in the base clone, which stays on the default branch.
+- Push only to `fix/issue-<number>`, leased against the SHA setup printed or your own last push.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

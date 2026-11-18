@@ -11,11 +11,16 @@
 #
 #   issue  Branch fix/issue-<number>, resumed from origin when pushed before, rebased
 #          onto the default branch. Bot-owned, so a worktree holding it is stale.
+#          Prints default_branch=<name> and remote_sha=<sha> on stderr, the remote
+#          branch as fetched here (empty when new): the caller leases its force-push
+#          against that, not origin/fix/issue-<number>, which any later fetch moves
+#          onto a human's push and so would let it be overwritten.
 #   pr     `gh pr checkout`, which resolves fork remotes. The branch may be the user's
 #          own checkout, so a worktree holding it is reported, never taken. `--force`
 #          resets a leftover local branch, which cannot fast-forward after a force-push.
-#          A fork's branch may come back renamed <owner>/<branch> and tracking the fork
-#          by URL, so push it to its configured remote and merge ref, not `origin`.
+#          A fork's branch may come back renamed <owner>/<branch>, tracking the fork by
+#          URL or, without maintainer edits, refs/pull/<number>/head, which takes no
+#          push; so the caller looks the PR's head up itself rather than trusting it.
 #
 # Exit codes:
 #   0  Ready. Stdout is the worktree path.
@@ -116,11 +121,10 @@ else
     fi
     git branch -D "$BRANCH" 2>/dev/null || true
 
-    START="origin/$DEFAULT"
-    if git rev-parse --verify -q "origin/$BRANCH" >/dev/null; then
-        START="origin/$BRANCH"
-    fi
-    git worktree add -b "$BRANCH" "$WT" "$START"
+    REMOTE_SHA=$(git rev-parse --verify -q "origin/$BRANCH" || true)
+    echo "default_branch=$DEFAULT"
+    echo "remote_sha=$REMOTE_SHA"
+    git worktree add -b "$BRANCH" "$WT" "${REMOTE_SHA:-origin/$DEFAULT}"
     cd "$WT"
 
     if ! git rebase "origin/$DEFAULT"; then
