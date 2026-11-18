@@ -14,21 +14,30 @@
 # the most recently committed fork branch with that prefix wins. git decides that, not
 # the API: GitLab reports commit dates in the committer's offset, and comparing those as
 # strings prefers whoever is furthest west. With none, start from the default branch.
+# Somebody else's commits on it are never rewritten: a branch carrying any commit whose
+# author email is not `git config user.email` is built on as it stands, not rebased, and
+# one that would conflict with the target branch is handed back for parking instead.
 #
 # The fork remote is fork-<mode>-<iid> rather than `fork`: remotes live in the base
 # clone's config, shared by every worktree, so one name would be re-pointed by another
 # run and a push would land on the wrong fork.
 #
 # The worktree is recreated every run; the pushed fork branch is the source of truth.
-# Only the path goes to stdout; remote=, fork_branch=, target_branch= and resumed= go to
-# stderr.
+# Only the path goes to stdout; remote=, fork_branch=, target_branch=, resumed= and
+# rebased= (false: left unrebased because of others' commits) go to stderr.
 #
 # Exit codes:
-#   0  Ready. stdout is the worktree path; cd into it.
+#   0  Ready. stdout is the worktree path.
 #   3  The rebase onto the target branch conflicted. It has been aborted and the
 #      worktree left in place; park rather than working here.
 #   4  The branch is checked out by another, still-live worktree, named on stderr. It
 #      may hold somebody's uncommitted work, so this never removes it.
+#   5  issue only: the branch carries other contributors' commits, named on stderr, and
+#      conflicts with the target branch. Rebasing would rewrite their work, so nothing
+#      was rebased; park.
+#   6  The merge request's branch lives in the target project itself, not a fork, so
+#      its fork remote would be the canonical repository and a force-push would rewrite
+#      it. Nothing was fetched or changed.
 #   Any other non-zero: the project, merge request or fork could not be read, or the
 #   command named in stderr failed; report it.
 
@@ -36,6 +45,11 @@ set -euo pipefail
 
 if [ "$#" -ne 3 ] || { [ "$2" != mr ] && [ "$2" != issue ]; }; then
     echo "usage: bash scripts/setup-worktree.sh <project> mr|issue <iid>" >&2
+    exit 64
+fi
+# The iid becomes a branch and a path, so anything but a number is refused outright.
+if ! [[ $3 =~ ^[0-9]+$ ]]; then
+    echo "<iid> must be a number: $3" >&2
     exit 64
 fi
 
@@ -82,6 +96,10 @@ fi
 
 FORK_URL=$(api "$FORK" | jq -r '.ssh_url_to_repo // empty') || FORK_URL=
 [ -n "$FORK_URL" ] || die "cannot read the fork ($FORK) for $MODE $IID; for an issue, run ensure-fork.sh"
+if [ "$FORK_URL" = "$UPSTREAM_URL" ]; then
+    echo "$MODE $IID's branch lives in $NAMESPACE/$PROJECT itself, not a fork; refusing to touch it"
+    exit 6
+fi
 
 if [ ! -d "$BASE/.git" ]; then
     mkdir -p "$(dirname "$BASE")"
@@ -111,6 +129,9 @@ else
     git fetch --prune upstream
 fi
 git fetch --prune "$FORK_REMOTE"
+# Missing, the rebase below would fail and read as a conflict.
+git rev-parse --verify --quiet "refs/remotes/upstream/$TARGET_BRANCH" >/dev/null ||
+    die "upstream has no branch $TARGET_BRANCH"
 
 # Removing a still-live worktree could discard another run's work: the caller decides.
 EXISTING=$(git worktree list --porcelain |
@@ -131,6 +152,32 @@ if [ "$MODE" = issue ]; then
 fi
 [ -n "$FORK_BRANCH" ] || die "merge request !$IID has no source branch"
 
+# issue mode takes whatever branch is newest, often somebody else's, unasked; mr mode is
+# a merge request the user chose to rebase. Author email is all git knows of "you", so a
+# commit of yours made under another address counts as theirs: it errs toward not
+# rewriting. merge-tree answers "would it conflict" without touching any checkout.
+REBASE=true
+if [ "$MODE" = issue ] && [ "$RESUMED" = true ]; then
+    AUTHORS=$(git log --format='%ae' "upstream/$TARGET_BRANCH..$FORK_REMOTE/$FORK_BRANCH")
+    ME=$(git config user.email) || ME=
+    OTHERS=$(printf '%s\n' "$AUTHORS" | awk -v me="$ME" 'NF && tolower($0) != tolower(me)' | sort -u)
+    if [ -n "$OTHERS" ]; then
+        REBASE=false
+        echo "not rebasing $FORK_BRANCH: it carries commits by $(printf '%s' "$OTHERS" | tr '\n' ' ')"
+        MERGE=0
+        git merge-tree --write-tree "upstream/$TARGET_BRANCH" "$FORK_REMOTE/$FORK_BRANCH" \
+            >/dev/null || MERGE=$?
+        case $MERGE in
+            0) ;;
+            1)
+                echo "$FORK_BRANCH conflicts with upstream/$TARGET_BRANCH; it is not ours to rebase"
+                exit 5
+                ;;
+            *) die "git merge-tree failed (exit $MERGE); checking for conflicts needs git 2.38 or later" ;;
+        esac
+    fi
+fi
+
 if [ -d "$WT" ]; then
     git worktree remove "$WT" --force || rm -rf "$WT"
 fi
@@ -138,14 +185,20 @@ git worktree prune
 # May legitimately not exist on a first run.
 git branch -D "$BRANCH" >/dev/null 2>&1 || true
 
-# Only a resumed branch has anything to rebase, so only it can conflict.
+# Only a resumed branch has anything to rebase, so only it can conflict. A rebase that
+# fails without stopping mid-way (a dirty tree, a bad ref) is not a conflict.
 if [ "$RESUMED" = true ]; then
     git worktree add -b "$BRANCH" "$WT" "$FORK_REMOTE/$FORK_BRANCH"
     cd "$WT"
-    if ! git rebase "upstream/$TARGET_BRANCH"; then
-        git rebase --abort 2>/dev/null || true
-        echo "rebase onto upstream/$TARGET_BRANCH conflicted; aborted"
-        exit 3
+    if [ "$REBASE" = true ] && ! git rebase "upstream/$TARGET_BRANCH"; then
+        if [ -d "$(git rev-parse --git-path rebase-merge)" ] ||
+            [ -d "$(git rev-parse --git-path rebase-apply)" ] ||
+            git rev-parse --verify --quiet REBASE_HEAD >/dev/null; then
+            git rebase --abort 2>/dev/null || true
+            echo "rebase onto upstream/$TARGET_BRANCH conflicted; aborted"
+            exit 3
+        fi
+        die "rebase onto upstream/$TARGET_BRANCH failed before reaching a conflict"
     fi
 else
     git worktree add -b "$BRANCH" "$WT" "upstream/$TARGET_BRANCH"
@@ -159,4 +212,5 @@ echo "remote=$FORK_REMOTE"
 echo "fork_branch=$FORK_BRANCH"
 echo "target_branch=$TARGET_BRANCH"
 echo "resumed=$RESUMED"
+echo "rebased=$REBASE"
 echo "$WT" >&3

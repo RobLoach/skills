@@ -5,7 +5,9 @@
 # Usage: bash scripts/poll-issue.sh claim|handback <project> <issue-iid>
 #
 # /do: commands are queued for drupalbot rather than answered: the comment lands at once
-# and the assignment or label follows seconds later, or never. So this polls.
+# and the assignment or label follows seconds later, or never. So this polls, for at
+# most 8 minutes whatever LOACHBOT_CLAIM_POLL and LOACHBOT_CLAIM_MAX_POLLS say: a call
+# killed by its tool timeout ends with no exit code, and a retry would post again.
 #
 #   claim     Posts `/do:assign me` (GitLab's /assign needs a project role contributors
 #             lack) and waits until you are assigned. /do:assign *adds* an assignee, so
@@ -23,7 +25,7 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 3 ] || { [ "$1" != claim ] && [ "$1" != handback ]; }; then
+if [ "$#" -ne 3 ] || { [ "$1" != claim ] && [ "$1" != handback ]; } || ! [[ $3 =~ ^[0-9]+$ ]]; then
     echo "usage: bash scripts/poll-issue.sh claim|handback <project> <issue-iid>" >&2
     exit 64
 fi
@@ -37,6 +39,20 @@ LABEL=state::needsReview
 
 POLL_SECONDS=${LOACHBOT_CLAIM_POLL:-5}
 MAX_POLLS=${LOACHBOT_CLAIM_MAX_POLLS:-24}
+DEADLINE=480
+
+# A non-number would surface mid-wait as a `seq` or `sleep` error after /do: was posted.
+case "$MAX_POLLS" in
+    '' | *[!0-9]* | 0 | 0*) echo "LOACHBOT_CLAIM_MAX_POLLS must be an integer >= 1" >&2; exit 64 ;;
+esac
+# Capped so one sleep cannot carry the call past the deadline into its tool timeout.
+case "$POLL_SECONDS" in
+    '' | *[!0-9]* | ???*) echo "LOACHBOT_CLAIM_POLL must be an integer from 0 to 30" >&2; exit 64 ;;
+esac
+if [ "$POLL_SECONDS" -gt 30 ]; then
+    echo "LOACHBOT_CLAIM_POLL must be an integer from 0 to 30" >&2
+    exit 64
+fi
 
 api() { glab api --hostname "$HOST" "$@"; }
 
@@ -100,6 +116,7 @@ for _ in $(seq 1 "$MAX_POLLS"); do
             exit 0
             ;;
     esac
+    [ "$SECONDS" -lt "$DEADLINE" ] || break
 done
 
 echo "drupalbot has not finished the $MODE on #$IID: ${STATE#* }" >&2

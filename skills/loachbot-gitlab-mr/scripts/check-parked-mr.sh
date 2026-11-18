@@ -11,13 +11,15 @@
 # newest rename. GitLab embeds the new title in its rename note as HTML, which is not
 # worth parsing: if the current title carries the suffix, the latest rename parked it.
 # Inline review comments are ordinary notes, so they count as replies too. drupalbot's
-# notes and drupalbot commands (a note with a `/do:` line) are traffic, not answers.
+# notes are traffic, not answers, and so are your own notes carrying a `/do:` line (a
+# handback or other drupalbot command). Anyone else's note counts even with a `/do:`
+# line: a maintainer answering and relabelling in one comment has still answered.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
-#   5  Nothing to measure replies against: either the merge request could not be read,
-#      or no parking rename exists because the suffix was added by hand. Which one is
-#      named on stderr. Skip it and mention it to the user.
+#   5  Nothing to measure replies against: either the merge request or your own user
+#      could not be read, or no parking rename exists because the suffix was added by
+#      hand. Which one is named on stderr. Skip it and mention it to the user.
 #   6  Parked, but nobody has answered yet. Skip it.
 
 set -euo pipefail
@@ -33,6 +35,11 @@ PROJECT=$1
 IID=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
+
+if ! ME=$(api user 2>/dev/null | jq -r '.username // empty') || [ -z "$ME" ]; then
+    echo "cannot read the authenticated user from $HOST" >&2
+    exit 5
+fi
 
 # --paginate prints one array per page; slurp them into one.
 NOTES=$(api --paginate \
@@ -58,12 +65,12 @@ if [ -z "$PARKED" ]; then
     exit 5
 fi
 
-REPLIES=$(printf '%s' "$NOTES" | jq -c --arg parked "$PARKED" '
+REPLIES=$(printf '%s' "$NOTES" | jq -c --arg parked "$PARKED" --arg me "$ME" '
     .[]
     | select(.system == false
              and .created_at > $parked
              and .author.username != "drupalbot"
-             and (.body | test("(^|\n)[ \t]*/do:") | not))
+             and (.author.username != $me or (.body | test("(^|\n)[ \t]*/do:") | not)))
     | {author: .author.username, created_at, body}
 ')
 

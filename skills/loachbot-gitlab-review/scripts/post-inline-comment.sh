@@ -2,7 +2,11 @@
 #
 # Post one inline review comment on a merge request's diff, as a resolvable thread.
 #
-# Usage: bash scripts/post-inline-comment.sh <project> <mr-iid> <path> <new-line> <body-file> [old-line]
+# Usage: bash scripts/post-inline-comment.sh <project> <mr-iid> <head-sha> <path> <new-line> <body-file> [old-line]
+#
+# <head-sha> is the commit the review read (review.json's diff_refs.head_sha). A position
+# is anchored to the merge request's current diff, so after a push mid-review the line
+# numbers point at different code; the comment is refused rather than misplaced.
 #
 # The body comes from a file: markdown mangles through the shell, and `glab api -F` reads
 # a leading `@` as a filename. Uses the discussions API because glab still labels
@@ -17,12 +21,14 @@
 #   1  GitLab rejected the position - usually a context line given without [old-line], or
 #      a line that is not part of the diff at all. The error is printed; fall back to a
 #      file-level or summary comment rather than guessing at another line number.
+#   3  The merge request's head is no longer <head-sha>: the author pushed since the
+#      review read the diff. Nothing posted; gather the context again and recheck.
 #   5  The merge request could not be read.
 
 set -euo pipefail
 
-if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
-    echo "usage: bash scripts/post-inline-comment.sh <project> <mr-iid> <path> <new-line> <body-file> [old-line]" >&2
+if [ "$#" -lt 6 ] || [ "$#" -gt 7 ]; then
+    echo "usage: bash scripts/post-inline-comment.sh <project> <mr-iid> <head-sha> <path> <new-line> <body-file> [old-line]" >&2
     exit 64
 fi
 
@@ -30,10 +36,19 @@ HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 IID=$2
-PATH_NEW=$3
-LINE_NEW=$4
-BODY_FILE=$5
-LINE_OLD=${6:-}
+REVIEWED_SHA=$3
+PATH_NEW=$4
+LINE_NEW=$5
+BODY_FILE=$6
+LINE_OLD=${7:-}
+
+# A bad line would otherwise surface as a jq error, exiting 2 or 5 and read as an
+# unreadable merge request.
+if ! [[ $IID =~ ^[0-9]+$ && $REVIEWED_SHA =~ ^[0-9a-f]{40}$ && $LINE_NEW =~ ^[1-9][0-9]*$ ]] ||
+    { [ -n "$LINE_OLD" ] && ! [[ $LINE_OLD =~ ^[1-9][0-9]*$ ]]; }; then
+    echo "<mr-iid>, <new-line> and [old-line] must be numbers, and <head-sha> a full 40-character SHA" >&2
+    exit 64
+fi
 
 if [ ! -r "$BODY_FILE" ]; then
     echo "body file not readable: $BODY_FILE" >&2
@@ -51,6 +66,11 @@ fi
 BASE_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.base_sha')
 START_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.start_sha')
 HEAD_SHA=$(printf '%s' "$MR" | jq -r '.diff_refs.head_sha')
+
+if [ "$HEAD_SHA" != "$REVIEWED_SHA" ]; then
+    echo "!$IID's head is now $HEAD_SHA, not the reviewed $REVIEWED_SHA: nothing posted" >&2
+    exit 3
+fi
 
 # `--field position[base_sha]=...` is sent as a literal key that GitLab ignores, so the
 # POST returns 201 with an unpositioned Overview comment and no error. Send real JSON

@@ -27,6 +27,8 @@ metadata:
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
 `<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+
+Each block runs in a fresh shell, and a sub-agent may start in another directory, so no variable or `cd` carries from one block to the next. A block whose result is needed later prints it (`WT=…`, `MR_IID=…`); later blocks take that printed literal as a placeholder, as in `git -C <worktree-path> …`.
 <!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
@@ -82,16 +84,15 @@ Read the default branch from a detached worktree beside the shared clone at `~/P
 ```bash
 RC=0
 WT=$(bash <this skill's directory>/scripts/setup-plan-worktree.sh <project>) || RC=$?
-echo "setup-plan-worktree.sh exit $RC"
-if [ "$RC" -eq 0 ]; then cd "$WT"; fi
+echo "setup-plan-worktree.sh exit $RC WT=$WT"
 ```
 
-It changes directory only on **0**; act on the printed exit code:
+On **0**, the printed `WT=` is the `<worktree-path>` the reads below work in. Act on the printed exit code:
 
 - **6** → the project could not be read. Check the machine name and namespace (a sandbox needs `LOACHBOT_GITLAB_NAMESPACE=sandbox`), then report it and stop.
 - Any other non-zero → report the failing git command from stderr and stop.
 
-When the run ends, `git -C "$WT" worktree remove --force "$WT"` (git runs it from the base clone).
+When the run ends, `git -C <worktree-path> worktree remove --force <worktree-path>` (git runs it from the base clone).
 
 ### 3. Read the queue, the releases and the labels
 
@@ -99,7 +100,7 @@ Read the queue before the code, so the plan does not re-file what it already hol
 
 ```bash
 bash <this skill's directory>/scripts/project-context.sh <project> > <tmp>/plan-context.json
-jq -r '"\(.path) default=\(.default_branch) queue=\(.issue_queue) open=\(.open_issues_count) capped=\(.capped)"' \
+jq -r '"\(.path) default=\(.default_branch) queue=\(.issue_queue) open=\(.open_issues_count) capped=\(.capped) read_errors=\(.read_errors | join(","))"' \
     <tmp>/plan-context.json
 ```
 
@@ -117,6 +118,8 @@ Then branch on `issue_queue`:
     Without `drupalorg`, say plainly that no duplicate check was possible and every item needs checking by hand before filing.
 
 `capped: true` means `open_issues` is a sample: say so when presenting, and search per candidate in Step 6. `mrs_capped: true` means the same of `open_merge_requests`: search merge requests per candidate too (`merge_requests?state=opened&search=<keywords>`).
+
+A non-empty `read_errors` names lists that could not be read and stand empty, not clear: tell the user duplicates could not be checked against them, and search per candidate in Step 6 instead (`recently_closed` with `state=closed`).
 
 If `archived: true`, raise it before going further.
 
@@ -147,10 +150,10 @@ Status: <where it stands today. Supported branches and the newest release, activ
 
 Aim for **3-10** issues that move the project toward its goals, each one coherent unit of work (split epics), with a title under 70 characters, a category, a priority justified by Step 5, an effort and impact, and a branch from `branches`. "The default branch" is an answer, not a default: name why when it is another.
 
-Check each candidate against `open_issues`, `recently_closed` and `open_merge_requests`, and when `capped`, search:
+Check each candidate against `open_issues`, `recently_closed` and `open_merge_requests`, and when `capped` or `read_errors` names one of them, search:
 
 ```bash
-glab api --hostname git.drupalcode.org \
+glab api --hostname "${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}" \
     "projects/<namespace>%2F<project>/issues?search=<two or three keywords>&in=title,description&per_page=20" |
     jq -r '.[] | "#\(.iid) [\(.state)] \(.title)"'
 ```
@@ -187,10 +190,18 @@ AI-Generated: Yes
 EOF
 ```
 
+Before the first filing, confirm where it lands:
+
+```bash
+glab api --hostname "${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}" "projects/<namespace>%2F<project>" | jq -r '.web_url'
+```
+
+It must print the project the user approved the plan for; anything else, or nothing, means the wrong host, namespace or name: stop and file nothing.
+
 File in plan order, so later issues can reference earlier ones by number:
 
 ```bash
-glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>/issues" \
+glab api --hostname "${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}" -X POST "projects/<namespace>%2F<project>/issues" \
     -f "title=<title>" \
     -f "labels=<comma-separated labels>" \
     -F "description=@<tmp>/planned-issue.md" |
@@ -200,7 +211,7 @@ glab api --hostname git.drupalcode.org -X POST "projects/<namespace>%2F<project>
 GitLab silently drops labels a non-member may not set, so check the `labels=` it echoes. Apply any missing ones through drupalbot, one verbatim `/do:` line each:
 
 ```bash
-glab issue note <new-iid> -R git.drupalcode.org/<namespace>/<project> -m "$(cat <<'EOF'
+glab issue note <new-iid> -R "${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}/<namespace>/<project>" -m "$(cat <<'EOF'
 /do:label ~"category::bug"
 /do:label ~"priority::normal"
 EOF

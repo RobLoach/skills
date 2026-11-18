@@ -27,6 +27,8 @@ metadata:
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
 `<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+
+Each block runs in a fresh shell, and a sub-agent may start in another directory, so no variable or `cd` carries from one block to the next. A block whose result is needed later prints it (`WT=…`, `MR_IID=…`); later blocks take that printed literal as a placeholder, as in `git -C <worktree-path> …`.
 <!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
@@ -116,15 +118,17 @@ bash <this skill's directory>/scripts/check-parked-issue.sh <project> <issue-iid
 - **6** → no reply yet. Skip it.
 - **5** → `state::blocked` was applied by hand, with no question to measure against. Skip it and tell the user.
 
-An issue with an open merge request is `loachbot-gitlab-mr`'s work. For a candidate with `mrs=` not `0`, check:
+An issue with an open merge request is `loachbot-gitlab-mr`'s work. Check a named issue, and any candidate with `mrs=` not `0`:
 
 ```bash
+set -o pipefail
 glab api --hostname git.drupalcode.org \
     "projects/<namespace>%2F<project>/issues/<issue-iid>/related_merge_requests" |
-    jq -r '.[] | select(.state == "opened") | "\(.references.full)\t\(.source_branch)"'
+    jq -r '.[] | select(.state == "opened") | "\(.references.full)\t\(.source_branch)"' ||
+    echo "unreadable"
 ```
 
-Anything printed → skip it and tell the user which merge request covers it.
+A merge request printed → skip it and tell the user which one covers it. `unreadable` → it could not be checked: skip it and say so (a named issue: report it and stop).
 
 Read the picked issue for Step 3:
 
@@ -153,6 +157,8 @@ Skip for a `resume` or `parked` issue (already yours). Otherwise claim it, by co
 ```bash
 bash <this skill's directory>/scripts/poll-issue.sh claim <project> <issue-iid>
 ```
+
+Run it with a 600000 ms tool timeout: it waits up to 8 minutes for drupalbot, and a call killed sooner tempts a rerun that posts `/do:assign me` twice.
 
 Act on its exit code:
 
@@ -191,6 +197,8 @@ bash <this skill's directory>/scripts/ensure-fork.sh <project> <issue-iid> > <tm
 jq -r '"\(.fork_path) id=\(.fork_id) created=\(.created) access_via=\(.access_via)"' <tmp>/fork.json
 ```
 
+Run it with a 600000 ms tool timeout: it waits up to 8 minutes for drupalbot, and a call killed sooner tempts a rerun that posts `/do:fork` or `/do:access` twice.
+
 Act on its exit code:
 
 - **0** → fork exists and is writable. Continue.
@@ -202,28 +210,28 @@ Then take a worktree at `~/Projects/drupalcode/<project>.worktrees/issue-<issue-
 ```bash
 RC=0
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> issue <issue-iid>) || RC=$?
-echo "setup-worktree.sh exit $RC"
-if [ "$RC" -eq 0 ]; then cd "$WT"; fi
+echo "setup-worktree.sh exit $RC WT=$WT"
 ```
 
-Its stderr ends with `remote=fork-issue-<issue-iid>`, `fork_branch=`, `target_branch=` and `resumed=` for Step 6. It changes directory only on **0**; act on the printed exit code:
+Its stderr ends with `remote=fork-issue-<issue-iid>`, `fork_branch=`, `target_branch=`, `resumed=` and `rebased=` for Step 6. On **0**, the printed `WT=` is the `<worktree-path>` every later block works in. Act on the printed exit code:
 
-- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; anything else is a Step 8 park. Never work in a half-rebased worktree. `WT` is empty: set it to the worktree path above and `cd` there first.
+- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; anything else is a Step 8 park. Never work in a half-rebased worktree. `WT=` is empty: `<worktree-path>` is the path above.
 - **4** — another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
+- **5** — the fork branch carries other contributors' commits (named on stderr) and conflicts with the target branch. Rebasing would rewrite their work: park per Step 8, naming the branch and the conflict.
 - Any other non-zero — stderr names what failed. Report it and stop; do not force through it.
 
-`resumed=true` means work already exists: read it (`git log upstream/<target-branch>..HEAD`) and build on it.
+`resumed=true` means work already exists: read it (`git -C <worktree-path> log upstream/<target-branch>..HEAD`) and build on it. `rebased=false` means it carries other contributors' commits and was left unrebased on purpose: add commits on top, and never rebase, squash or amend theirs.
 
 ### 5. Do the work
 
-Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the command that proves the fix. Then commit inside `$WT`, after checking `git status --short` and staging only the files the change meant to touch (delete stray artifacts or leave them untracked):
+Delegate the implementation per [Sub-agents](#sub-agents), passing `<worktree-path>` and the command that proves the fix. Then commit in the worktree, after checking `git -C <worktree-path> status --short` and staging only the files the change meant to touch (delete stray artifacts or leave them untracked):
 
 ```bash
-git add <paths>
-if git diff --cached --quiet; then
+git -C <worktree-path> add <paths>
+if git -C <worktree-path> diff --cached --quiet; then
     echo "nothing staged: no code change was needed"
 else
-    git commit -m "Issue #<issue-iid>: <short description>"
+    git -C <worktree-path> commit -m "Issue #<issue-iid>: <short description>"
 fi
 ```
 
@@ -234,7 +242,7 @@ Keep the diff to what the issue asked; mention broader cleanups to the user inst
 ### 6. Open the merge request
 
 ```bash
-git push --force-with-lease -u fork-issue-<issue-iid> "HEAD:<fork-branch>"
+git -C <worktree-path> push --force-with-lease -u fork-issue-<issue-iid> "HEAD:<fork-branch>"
 ```
 
 Write the description to a file (the shell mangles markdown):
@@ -249,33 +257,36 @@ AI-Generated: Yes
 EOF
 ```
 
-Find an existing merge request for the branch, or create one **on the fork** with `target_project_id` set to the project (created on the project, it merges the project into itself).
+Find an existing merge request for the branch, or create one **on the fork** with `target_project_id` set to the project (created on the project, it merges the project into itself). Nothing is created unless the lookup and both ids were read, so a failed read never opens a duplicate or a fork-into-itself merge request:
 
 ```bash
-TARGET_ID=$(glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>" | jq -r '.id')
-FORK_ID=$(jq -r '.fork_id' <tmp>/fork.json)
+set -o pipefail
+TARGET_ID=$(glab api --hostname git.drupalcode.org "projects/<namespace>%2F<project>" | jq -r '.id // empty') || TARGET_ID=
+FORK_ID=$(jq -r '.fork_id // empty' <tmp>/fork.json) || FORK_ID=
+OPEN=$(glab api --hostname git.drupalcode.org \
+    "projects/<namespace>%2F<project>/merge_requests?source_branch=<fork-branch>&state=opened") || OPEN=
+MR_IID=$(printf '%s' "${OPEN:-null}" | jq -r '.[0].iid // empty' 2>/dev/null) || MR_IID=
 
-MR_IID=$(glab api --hostname git.drupalcode.org \
-    "projects/<namespace>%2F<project>/merge_requests?source_branch=<fork-branch>&state=opened" |
-    jq -r '.[0].iid // empty')
-
-if [ -z "$MR_IID" ]; then
+if [ -n "$OPEN" ] && [ -z "$MR_IID" ] && [[ $TARGET_ID =~ ^[0-9]+$ && $FORK_ID =~ ^[0-9]+$ ]]; then
     MR_IID=$(glab api --hostname git.drupalcode.org -X POST "projects/$FORK_ID/merge_requests" \
         -f "source_branch=<fork-branch>" \
         -f "target_branch=<target-branch>" \
         -f "target_project_id=$TARGET_ID" \
         -f "title=Issue #<issue-iid>: <short description>" \
         -F "description=@<tmp>/mr-description.md" |
-        jq -r '.iid')
+        jq -r '.iid // empty') || MR_IID=
 fi
+echo "MR_IID=$MR_IID"
 ```
+
+A number after `MR_IID=` is `<mr-iid>` from here on. Anything else means a read or the create failed: report it and stop, without retrying the create blindly (it may have landed; a later run's lookup finds it).
 
 Not a draft: reviewers go by the issue's `state::` label, and nobody reviews a draft.
 
 ### 7. Make every job green
 
 ```bash
-bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> "$MR_IID" "$(git rev-parse HEAD)"
+bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <mr-iid> "$(git -C <worktree-path> rev-parse HEAD)"
 ```
 
 <!-- SHARED: gitlab-wait-for-pipeline -->
@@ -284,7 +295,7 @@ Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT`
 Act on its exit code:
 
 - **0** → every job passed, or the commit configures no CI. Continue.
-- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
+- **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing the worktree path and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
 - **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them as pre-existing in the handback instead of "the pipeline is green".
 - **7** → the pipeline could not be read, or it ended other than success with no failed job to show for it (a blocking manual job, a canceled run, a downstream pipeline it cannot read). Unknown is not passing: report it with the URL and stop.
 - **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back.
@@ -305,7 +316,7 @@ After **7** or **8**, tell the user a `loachbot-gitlab-mr` run finishes it once 
 <!-- SHARED: local-tests -->
 #### Running tests locally
 
-- **DDEV** (`ddev` on `PATH`): in the worktree, `ddev config --project-type=drupal --docroot=web --project-name="<project>-$(basename "$WT")" && ddev add-on get ddev/ddev-drupal-contrib && ddev start && ddev poser && ddev symlink-project`, then `ddev phpunit`, `ddev phpcs`, `ddev phpstan` or `ddev eslint` mirror the CI jobs.
+- **DDEV** (`ddev` on `PATH`): in the worktree, `ddev config --project-type=drupal --docroot=web --project-name="<project>-$(basename <worktree-path>)" && ddev add-on get ddev/ddev-drupal-contrib && ddev start && ddev poser && ddev symlink-project`, then `ddev phpunit`, `ddev phpcs`, `ddev phpstan` or `ddev eslint` mirror the CI jobs.
 - **Without DDEV**, unit tests need nothing more. Kernel and functional tests need a database, and Drupal 11 refuses SQLite older than 3.45; check PHP's own with `php -r 'echo (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn();'`. Older, use a container: `docker run -d --rm -p 3306:3306 -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=db mariadb:lts` with `SIMPLETEST_DB=mysql://root:root@127.0.0.1/db`.
 - Never commit the harness: add `.ddev/`, `web/`, `vendor/` and `composer.contrib.*` to `$(git rev-parse --git-common-dir)/info/exclude`, which every worktree shares, so they never show up as untracked.
 <!-- /SHARED: local-tests -->
@@ -346,7 +357,7 @@ EOF
 
 Name the approach and what you were unsure of; "Implemented the fix" tells a reviewer nothing.
 
-Confirm drupalbot acted:
+Confirm drupalbot acted, with a 600000 ms tool timeout (it waits up to 8 minutes):
 
 ```bash
 bash <this skill's directory>/scripts/poll-issue.sh handback <project> <issue-iid>
@@ -361,7 +372,7 @@ Remove the worktree and local branch:
 
 ```bash
 cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
-git worktree remove "$WT" --force
+git worktree remove <worktree-path> --force
 git branch -D issue-<issue-iid>
 git remote remove fork-issue-<issue-iid>
 ```

@@ -19,6 +19,10 @@
 # A 404 is confirmed by a second read before /do:fork is posted, so one dropped
 # connection cannot put a duplicate fork request on the issue.
 #
+# The three waits share one 8-minute deadline, whatever LOACHBOT_FORK_POLL and
+# LOACHBOT_FORK_MAX_POLLS say: a call killed by its tool timeout ends with no exit code,
+# and a retry would post the /do: comments again.
+#
 # Emits one JSON object: fork_path, fork_id, fork_ssh_url (the git.drupal.org URL to push
 # to), created (this run asked for the fork), access_via ("existing" | "comment").
 #
@@ -33,7 +37,7 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
+if [ "$#" -ne 2 ] || ! [[ $2 =~ ^[0-9]+$ ]]; then
     echo "usage: bash scripts/ensure-fork.sh <project> <issue-iid>" >&2
     exit 64
 fi
@@ -49,11 +53,27 @@ FORK_ENC="issue%2F$PROJECT-$IID"
 
 POLL_SECONDS=${LOACHBOT_FORK_POLL:-5}
 MAX_POLLS=${LOACHBOT_FORK_MAX_POLLS:-24}
+DEADLINE=480
+
+# A non-number would surface mid-wait as a `seq` or `[` error after /do: was posted.
+case "$MAX_POLLS" in
+    '' | *[!0-9]* | 0 | 0*) echo "LOACHBOT_FORK_MAX_POLLS must be an integer >= 1" >&2; exit 64 ;;
+esac
+# Capped so one sleep cannot carry the call past the deadline into its tool timeout.
+case "$POLL_SECONDS" in
+    '' | *[!0-9]* | ???*) echo "LOACHBOT_FORK_POLL must be an integer from 0 to 30" >&2; exit 64 ;;
+esac
+if [ "$POLL_SECONDS" -gt 30 ]; then
+    echo "LOACHBOT_FORK_POLL must be an integer from 0 to 30" >&2
+    exit 64
+fi
 # GitLab's Developer role. Below this a branch cannot be pushed, so it is the real
 # question rather than mere membership.
 MIN_ACCESS=30
 
 api() { glab api --hostname "$HOST" "$@"; }
+
+out_of_time() { [ "$SECONDS" -ge "$DEADLINE" ]; }
 
 # A failed post may still have reached the issue, so it is treated like one drupalbot
 # ignored rather than retried.
@@ -99,6 +119,7 @@ if [ -z "$FORK_ID" ]; then
         sleep "$POLL_SECONDS"
         FORK_ID=$(read_fork)
         [ -n "$FORK_ID" ] && break
+        out_of_time && break
     done
 fi
 
@@ -126,6 +147,7 @@ for _ in $(seq 1 "$MAX_POLLS"); do
         READY=true
         break
     fi
+    out_of_time && break
     echo "waiting for $FORK_PATH to finish importing" >&2
     sleep "$POLL_SECONDS"
 done
@@ -155,6 +177,7 @@ if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
         sleep "$POLL_SECONDS"
         ACCESS=$(my_access)
         [ "$ACCESS" -ge "$MIN_ACCESS" ] && break
+        out_of_time && break
     done
 fi
 

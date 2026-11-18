@@ -28,7 +28,7 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
+if [ "$#" -ne 2 ] || ! [[ $2 =~ ^[0-9]+$ ]]; then
     echo "usage: bash scripts/compare-to-target.sh <project> <mr-iid>" >&2
     exit 64
 fi
@@ -40,6 +40,15 @@ IID=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
 MAX_LINES=${LOACHBOT_COMPARE_MAX_LINES:-20}
 BUDGET=${LOACHBOT_COMPARE_BUDGET:-}
+
+# A non-number would surface as a `[` error mid-comparison, exiting 2 and read as a
+# verdict.
+case "$MAX_LINES" in
+    '' | *[!0-9]* | 0 | 0*) echo "LOACHBOT_COMPARE_MAX_LINES must be an integer >= 1" >&2; exit 64 ;;
+esac
+case "$BUDGET" in
+    *[!0-9]* | 0?*) echo "LOACHBOT_COMPARE_BUDGET must be empty or an integer >= 0" >&2; exit 64 ;;
+esac
 
 api() { glab api --hostname "$HOST" "$@"; }
 

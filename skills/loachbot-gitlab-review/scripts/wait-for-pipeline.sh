@@ -32,6 +32,10 @@
 # (default 540) the whole call: the comparison gets what is left and skips the log diffs
 # once it is spent, so one call stays within a 10-minute tool limit.
 #
+# Whether [head-sha] configures CI is read from the local git, so run this inside the
+# worktree; a commit git cannot find there counts as configuring CI, which waits rather
+# than calling a missing pipeline "no CI".
+#
 # Exit codes:
 #   0  Every job passed, or the project has no CI at all - which is only believed when
 #      no [head-sha] was given, or that commit carries no CI configuration.
@@ -45,10 +49,18 @@
 
 set -euo pipefail
 
+# Usage errors exit 64: `${1:?}` would exit 1, which reads as "new failures".
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ] || ! [[ $2 =~ ^[0-9]+$ ]] ||
+    { [ "$#" -eq 3 ] && [ -z "$3" ]; }; then
+    echo "usage: bash scripts/wait-for-pipeline.sh <project> <mr-iid> [head-sha]" >&2
+    echo "(an empty [head-sha] is refused: it would judge whichever pipeline is current)" >&2
+    exit 64
+fi
+
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
-PROJECT=${1:?project machine name required}
-IID=${2:?merge request iid required}
+PROJECT=$1
+IID=$2
 HEAD_SHA=${3:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
@@ -57,6 +69,18 @@ POLL_SECONDS=${LOACHBOT_PIPELINE_POLL:-20}
 TIMEOUT_SECONDS=${LOACHBOT_PIPELINE_TIMEOUT:-420}
 CEILING_SECONDS=${LOACHBOT_PIPELINE_CEILING:-540}
 NO_PIPELINE_PROBES=${LOACHBOT_PIPELINE_PROBES:-5}
+
+# A non-number would surface mid-wait as a `[` or `$((...))` error, exiting 1 or 2 and
+# read as a verdict; a leading zero is octal to `$((...))`.
+case "$NO_PIPELINE_PROBES" in
+    '' | *[!0-9]* | 0 | 0*) echo "LOACHBOT_PIPELINE_PROBES must be an integer >= 1" >&2; exit 64 ;;
+esac
+for KNOB in "LOACHBOT_PIPELINE_SETTLE=$SETTLE_SECONDS" "LOACHBOT_PIPELINE_POLL=$POLL_SECONDS" \
+    "LOACHBOT_PIPELINE_TIMEOUT=$TIMEOUT_SECONDS" "LOACHBOT_PIPELINE_CEILING=$CEILING_SECONDS"; do
+    case "${KNOB#*=}" in
+        '' | *[!0-9]* | 0?*) echo "${KNOB%%=*} must be an integer >= 0" >&2; exit 64 ;;
+    esac
+done
 
 if [ -n "$HEAD_SHA" ] && ! [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]]; then
     if ! HEAD_SHA=$(git rev-parse --verify --quiet "$HEAD_SHA^{commit}" 2>/dev/null); then
@@ -113,6 +137,7 @@ pipeline_matches_head() {
 # creation can lag a push by minutes - rather than one that never will.
 has_ci() {
     [ -n "$HEAD_SHA" ] || return 1
+    git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null || return 0
     git cat-file -e "$HEAD_SHA:.gitlab-ci.yml" 2>/dev/null && return 0
     [ -n "$(api "projects/$NAMESPACE%2F$PROJECT" 2>/dev/null |
         jq -r '.ci_config_path // empty')" ]
@@ -235,7 +260,9 @@ printf '\nfailing jobs:\n%s\n\n' "$FAILED"
 CMP=0
 # Exit 2 only on the compare's say-so: its 0 can mean it read a newer pipeline with
 # nothing failing, which confirms nothing about the failures above.
-CMP_OUT=$(LOACHBOT_COMPARE_BUDGET=$((CEILING_SECONDS - SECONDS)) \
+BUDGET=$((CEILING_SECONDS - SECONDS))
+[ "$BUDGET" -ge 0 ] || BUDGET=0
+CMP_OUT=$(LOACHBOT_COMPARE_BUDGET=$BUDGET \
     bash "$HERE/compare-to-target.sh" "$PROJECT" "$IID") || CMP=$?
 printf '%s\n' "$CMP_OUT"
 case $CMP in

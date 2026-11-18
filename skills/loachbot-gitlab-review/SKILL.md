@@ -26,6 +26,8 @@ metadata:
 Scripts live in `scripts/` beside this file, run as `bash <this skill's directory>/scripts/<name>.sh`; each header documents arguments and exit codes.
 
 `<tmp>` is a per-run `mktemp -d` directory; runs may overlap, so never use a fixed `/tmp` path.
+
+Each block runs in a fresh shell, and a sub-agent may start in another directory, so no variable or `cd` carries from one block to the next. A block whose result is needed later prints it (`WT=…`, `MR_IID=…`); later blocks take that printed literal as a placeholder, as in `git -C <worktree-path> …`.
 <!-- /SHARED: gitlab-conventions -->
 
 <!-- SHARED: sub-agents -->
@@ -205,16 +207,18 @@ Exit **7** means the wrong project or job id: check both.
 
 **Report here only** when the user asked for the review in chat, or not to post it: post nothing to GitLab and skip Step 7. Reply with the findings as a numbered list, blocking first, each with `path:line` and the fix, then the pipeline state.
 
-A finding tied to a line goes inline as a resolvable thread. Write the body to a file, since the shell mangles markdown backticks and newlines:
+A finding tied to a line goes inline as a resolvable thread. Write the body to a file, since the shell mangles markdown backticks and newlines. `<head-sha>` is the commit you reviewed, `jq -r '.diff_refs.head_sha' <tmp>/review.json`:
 
 ```bash
 printf '%s\n' "This runs on every request; consider caching it." > <tmp>/finding.md
-bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <path> <new-line> <tmp>/finding.md
+bash <this skill's directory>/scripts/post-inline-comment.sh <project> <iid> <head-sha> <path> <new-line> <tmp>/finding.md
 ```
+
+Exit **3** means the author pushed since Step 2, so your line numbers point at other code; nothing was posted. Re-run Step 2, check each finding still holds against the new diff, and post again with the new `<head-sha>` and lines.
 
 Exit **1** means one of:
 
-- GitLab rejected the position, usually a context line without its old-side number. A line on both sides of the diff needs both: pass the old line as the sixth argument. The hunk header (`@@ -4,5 +4,6 @@`) carries the pair.
+- GitLab rejected the position, usually a context line without its old-side number. A line on both sides of the diff needs both: pass the old line as the seventh argument. The hunk header (`@@ -4,5 +4,6 @@`) carries the pair.
 - GitLab returned `201` but dropped the position, leaving a plain Overview thread; the script detects this and fails.
 
 Never retry with a guessed line number; a comment on the wrong code is worse than none. Fix the line pair or move the point into the summary.
@@ -229,10 +233,10 @@ glab api --hostname git.drupalcode.org -X POST \
     -F "body=@<tmp>/finding.md"
 ```
 
-Then exactly one summary note:
+Then exactly one summary note, not resolvable, so it neither blocks merging nor counts as an open thread:
 
 ```bash
-glab mr note create <iid> -R git.drupalcode.org/<namespace>/<project> < <tmp>/summary.md
+glab mr note create <iid> -R git.drupalcode.org/<namespace>/<project> --resolvable=false < <tmp>/summary.md
 ```
 
 In order: whether the change does what the issue asked, anything out of scope, blocking findings, suggestions, and the pipeline state. Separate *blocking* from *nice to have* explicitly, and say plainly when the change is good.
@@ -261,21 +265,24 @@ Only when the user asks to apply findings to the merge request. This leaves the 
 ```bash
 RC=0
 WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>) || RC=$?
-echo "setup-worktree.sh exit $RC"
-if [ "$RC" -eq 0 ]; then cd "$WT"; fi
+echo "setup-worktree.sh exit $RC WT=$WT"
 ```
 
-Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. It changes directory only on **0**; act on the printed exit code:
+Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. On **0**, the printed `WT=` is the `<worktree-path>` every later block works in. Act on the printed exit code:
 
 - **3** → the rebase conflicted and was aborted. Leave it to `loachbot-gitlab-mr`; report it and stop.
+- **6** → the branch lives in the project itself, not a fork, so pushing would rewrite the canonical repository. Report it and stop.
 - **4** → another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero → stderr names what failed. Report it and stop.
 
-Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents). One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`. Then push and wait for every job, forgiven ones included:
+Fix only the findings the user picked, by their review number, delegating per [Sub-agents](#sub-agents) with `<worktree-path>`. One commit per finding when asked, each `Issue #<issue-id>: <the finding, briefly>`. Then push and wait for every job, forgiven ones included:
 
 ```bash
-git push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
-bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
+git -C <worktree-path> push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
+```
+
+```bash
+bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git -C <worktree-path> rev-parse HEAD)"
 ```
 
 Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) and ends, comparison included, within `LOACHBOT_PIPELINE_CEILING` (9 minutes).
@@ -302,7 +309,7 @@ Then remove the worktree, its local branch and its remote; the work is pushed:
 
 ```bash
 cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
-git worktree remove "$WT" --force
+git worktree remove <worktree-path> --force
 git branch -D mr-<iid>
 git remote remove fork-mr-<iid>
 ```
