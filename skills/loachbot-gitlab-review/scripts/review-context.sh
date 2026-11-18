@@ -7,8 +7,11 @@
 # Keys: merge_request {iid, title, author, state, draft, source_branch, target_branch,
 # source_project_id, web_url, description}, diff_refs {base_sha, start_sha, head_sha}
 # (inline comments need these), issue_ref, files [{new_path, old_path, new_file,
-# deleted_file, renamed_file, diff}], pipeline_project_id, discussions [{id, resolved,
-# path, line, author, body}].
+# deleted_file, renamed_file, too_large, collapsed, diff}], pipeline_project_id,
+# discussions [{id, resolved, path, line, author, body}].
+#
+# GitLab sends an empty `diff` for a file whose diff is `too_large` or `collapsed`, so
+# those flags are kept: without them such a file reads as an unchanged one.
 #
 # `discussions` (each thread's first note, trimmed) is there so a review replies in an
 # existing thread rather than re-posting a finding. `pipeline_project_id` is where job
@@ -62,7 +65,8 @@ if ! RAW_FILES=$(api --paginate \
     exit 5
 fi
 FILES=$(printf '%s' "$RAW_FILES" |
-    jq -sc 'add // [] | map({new_path, old_path, new_file, deleted_file, renamed_file, diff})')
+    jq -sc 'add // [] | map({new_path, old_path, new_file, deleted_file, renamed_file,
+        too_large: (.too_large // false), collapsed: (.collapsed // false), diff})')
 
 if ! RAW_DISCUSSIONS=$(api --paginate \
     "projects/$NAMESPACE%2F$PROJECT/merge_requests/$IID/discussions?per_page=100" 2>/dev/null); then

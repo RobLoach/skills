@@ -12,8 +12,9 @@
 # it is a drupal.org node id. The two numbering spaces overlap - ai_ckeditor's GitLab
 # issue 3615852 and drupal.org node 3615852 are unrelated - so trying both and keeping
 # whichever answers returns a confident, wrong requirement. The world is decided first,
-# from whether the project has GitLab issues at all, and a drupal.org node must also name
-# the project asked about.
+# from the project's `issues_enabled` flag - not an empty issue list, since a freshly
+# migrated queue is legitimately empty - and a drupal.org node must also name the
+# project asked about.
 #
 # Emits one JSON object: source ("gitlab" | "drupal.org"), ref, title, status,
 # actionable (false when fixed, closed, postponed or RTBC), writable (false for
@@ -41,14 +42,15 @@ REF=$2
 
 api() { glab api --hostname "$HOST" "$@"; }
 
-# Which world? A project with no GitLab issues at all never migrated its queue.
-if ! PROBE=$(api "projects/$NAMESPACE%2F$PROJECT/issues?per_page=1" 2>/dev/null) ||
-    [ "$(printf '%s' "$PROBE" | jq -r 'type')" != "array" ]; then
+# Which world? A queue that never migrated (core, eck) has the GitLab tracker off.
+META=$(api "projects/$NAMESPACE%2F$PROJECT" 2>/dev/null) || META=null
+ISSUES_ENABLED=$(printf '%s' "$META" | jq -r '.issues_enabled? | booleans' 2>/dev/null) || ISSUES_ENABLED=
+if [ -z "$ISSUES_ENABLED" ]; then
     echo "cannot tell whether $NAMESPACE/$PROJECT keeps its issues in GitLab" >&2
     exit 6
 fi
 
-if [ "$(printf '%s' "$PROBE" | jq -r 'length')" != "0" ]; then
+if [ "$ISSUES_ENABLED" = true ]; then
     # Migrated: the fork's number is a GitLab issue iid.
     if ! ISSUE=$(api "projects/$NAMESPACE%2F$PROJECT/issues/$REF" 2>/dev/null) ||
         [ "$(printf '%s' "$ISSUE" | jq -r '.iid // empty')" = "" ]; then

@@ -22,16 +22,23 @@
 # head_pipeline.project_id decides. The merge request list endpoint omits head_pipeline,
 # so this polls the single-merge-request read.
 #
+# A pipeline that ends other than `success` with no failed job to show for it - blocked
+# on a manual job, canceled, or red in a downstream pipeline this cannot read - is not
+# passing, whatever its jobs say.
+#
 # On a failure this runs compare-to-target.sh, so the caller learns whether the target
 # branch was already red. Polls with `sleep` rather than GNU `timeout`, absent on macOS;
-# LOACHBOT_PIPELINE_TIMEOUT (default 420) keeps one call within a 10-minute tool limit.
+# LOACHBOT_PIPELINE_TIMEOUT (default 420) bounds the wait, and LOACHBOT_PIPELINE_CEILING
+# (default 540) the whole call: the comparison gets what is left and skips the log diffs
+# once it is spent, so one call stays within a 10-minute tool limit.
 #
 # Exit codes:
 #   0  Every job passed, or the project has no CI at all - which is only believed when
 #      no [head-sha] was given, or that commit carries no CI configuration.
 #   1  New failures, listed under `new:`: this branch's to fix, forgiven or not.
 #   2  Only failures the target branch already has. Report them; never work around them.
-#   7  The pipeline or its jobs could not be read. Unknown is not passing: report it.
+#   7  The pipeline or its jobs could not be read, or it ended other than success with
+#      no failed job to show for it. Unknown is not passing: report it.
 #   8  Still running when the time ran out, or no pipeline for [head-sha] appeared yet
 #      though the project has CI.
 #      Run it again; report the pending jobs only once repeats stop helping.
@@ -48,6 +55,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SETTLE_SECONDS=${LOACHBOT_PIPELINE_SETTLE:-20}
 POLL_SECONDS=${LOACHBOT_PIPELINE_POLL:-20}
 TIMEOUT_SECONDS=${LOACHBOT_PIPELINE_TIMEOUT:-420}
+CEILING_SECONDS=${LOACHBOT_PIPELINE_CEILING:-540}
 NO_PIPELINE_PROBES=${LOACHBOT_PIPELINE_PROBES:-5}
 
 if [ -n "$HEAD_SHA" ] && ! [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]]; then
@@ -60,6 +68,33 @@ fi
 api() { glab api --hostname "$HOST" "$@"; }
 
 out_of_time() { [ "$SECONDS" -ge "$TIMEOUT_SECONDS" ]; }
+
+# A pipeline's jobs plus those of the pipelines its bridges trigger, as one array of
+# {id, name, status, allow_failure, project_id}. A bridge without `strategy: depend`
+# stays green whatever its child does, so only the child's own jobs say red. Child jobs
+# are named <bridge>/<job> and carry their own project, where their logs live; a bridge
+# that triggered nothing stands in for itself. Only one level down is followed.
+pipeline_jobs() {
+    local JOBS BRIDGES ALL CHILD NAME PID ID
+    JOBS=$(api --paginate "projects/$1/pipelines/$2/jobs?per_page=100" 2>/dev/null |
+        jq -sc 'add | map({id, name, status, allow_failure})') || return 1
+    BRIDGES=$(api --paginate "projects/$1/pipelines/$2/bridges?per_page=100" 2>/dev/null |
+        jq -sc 'add // [] | map({id, name, status, allow_failure,
+            down: (.downstream_pipeline // null | if . then {id, project_id} else null end)})') ||
+        return 1
+    ALL=$(printf '%s\n%s' "$JOBS" "$BRIDGES" | jq -sc --arg p "$1" '
+        .[0] + [.[1][] | select(.down == null) | del(.down)] | map(. + {project_id: $p})')
+    while IFS=$'\t' read -r NAME PID ID; do
+        [ -n "$NAME" ] || continue
+        CHILD=$(api --paginate "projects/$PID/pipelines/$ID/jobs?per_page=100" 2>/dev/null |
+            jq -sc --arg b "$NAME" --arg p "$PID" '
+                add | map({id, name: "\($b)/\(.name)", status, allow_failure, project_id: $p})') ||
+            return 1
+        ALL=$(printf '%s\n%s' "$ALL" "$CHILD" | jq -sc 'add')
+    done < <(printf '%s' "$BRIDGES" |
+        jq -r '.[] | select(.down) | "\(.name)\t\(.down.project_id)\t\(.down.id)"')
+    printf '%s' "$ALL"
+}
 
 # Is the attached pipeline the one for [head-sha], directly or as a merged-results
 # parent? A failed read is just "not yet".
@@ -171,33 +206,37 @@ if [ "$SETTLED" != true ]; then
     exit 8
 fi
 
-# --paginate prints one array per page, and a large pipeline (core's) has several.
-if ! JOBS=$(api --paginate "projects/$PIPELINE_PROJECT/pipelines/$PIPELINE_ID/jobs?per_page=100" \
-    2>/dev/null | jq -sc 'add') ||
-    [ "$(printf '%s' "$JOBS" | jq -r 'type')" != "array" ]; then
+if ! JOBS=$(pipeline_jobs "$PIPELINE_PROJECT" "$PIPELINE_ID"); then
     echo "cannot read the jobs of pipeline $PIPELINE_ID in project $PIPELINE_PROJECT" >&2
     exit 7
 fi
 
 # A retried job is listed once per attempt; the highest id is the latest run.
-LATEST=$(printf '%s' "$JOBS" | jq -c 'group_by(.name) | map(max_by(.id) | {id, name, status, allow_failure})')
+LATEST=$(printf '%s' "$JOBS" | jq -c 'group_by(.name) | map(max_by(.id))')
 
-FAILED=$(printf '%s' "$LATEST" | jq -r '
+FAILED=$(printf '%s' "$LATEST" | jq -r --arg p "$PIPELINE_PROJECT" '
     .[]
     | select(.status == "failed" or .status == "canceled")
     | "  \(.name): \(.status)\(if .allow_failure then " (allow_failure)" else "" end) job=\(.id)"
+      + (if .project_id != $p then " project=\(.project_id)" else "" end)
 ')
 
 echo "pipeline $PIPELINE_ID in project $PIPELINE_PROJECT reports $STATUS; per-job results:"
 printf '%s' "$LATEST" | jq -r '.[] | "  \(.name): \(.status)"' | sort
 
-[ -n "$FAILED" ] || exit 0
+if [ -z "$FAILED" ]; then
+    [ "$STATUS" != success ] || exit 0
+    echo "pipeline $PIPELINE_ID is $STATUS, yet no job in it failed: a blocking manual" \
+        "job, a canceled run or a downstream pipeline this cannot read; not passing" >&2
+    exit 7
+fi
 printf '\nfailing jobs:\n%s\n\n' "$FAILED"
 
 CMP=0
 # Exit 2 only on the compare's say-so: its 0 can mean it read a newer pipeline with
 # nothing failing, which confirms nothing about the failures above.
-CMP_OUT=$(bash "$HERE/compare-to-target.sh" "$PROJECT" "$IID") || CMP=$?
+CMP_OUT=$(LOACHBOT_COMPARE_BUDGET=$((CEILING_SECONDS - SECONDS)) \
+    bash "$HERE/compare-to-target.sh" "$PROJECT" "$IID") || CMP=$?
 printf '%s\n' "$CMP_OUT"
 case $CMP in
     0) grep -q '^pre-existing' <<<"$CMP_OUT" && exit 2 ;;

@@ -17,7 +17,8 @@
 # Exit codes:
 #   0  Done. The assignees and labels are printed.
 #   5  The authenticated user, or for claim the issue, could not be read. Nothing posted.
-#   6  drupalbot did not act within the wait. The comment is public: do not post it again.
+#   6  drupalbot did not act within the wait, or for claim, posting the comment failed
+#      and it may have landed anyway. The comment is public: do not post it again.
 #   7  claim only: somebody else holds the issue. Nothing posted.
 
 set -euo pipefail
@@ -82,7 +83,11 @@ if [ "$MODE" = claim ]; then
             exit 7
             ;;
     esac
-    glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:assign me" >&2
+    # A failed post may still have reached the issue, so it is never retried.
+    if ! glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:assign me" >&2; then
+        echo "posting /do:assign me failed; it may still have landed, so do not post it again" >&2
+        exit 6
+    fi
 fi
 
 STATE=unread

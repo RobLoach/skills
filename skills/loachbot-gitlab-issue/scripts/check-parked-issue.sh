@@ -9,7 +9,9 @@
 # marker - maintainers set it for their own reasons, and it carries no timestamp - so the
 # marker is your own comment carrying the /do:label command, question and command in one.
 #
-# A reply is a later comment by anyone but you or drupalbot. Other bots are not reliably
+# A reply is a later comment by anyone but drupalbot. Your own count too, so you can
+# answer your own question, except those carrying a `/do:` line: those are this skill's
+# un-park, handback and drupalbot commands, not answers. Other bots are not reliably
 # named and can still surface as replies, so read what is printed before acting on it.
 #
 # Exit codes:
@@ -70,8 +72,8 @@ REPLIES=$(printf '%s' "$NOTES" | jq -c --arg parked "$PARKED" --arg me "$ME" '
     .[]
     | select(.system == false
              and .created_at > $parked
-             and .author.username != $me
-             and .author.username != "drupalbot")
+             and .author.username != "drupalbot"
+             and (.author.username != $me or (.body | test("(^|\n)[ \t]*/do:") | not)))
     | {author: .author.username, created_at, body}
 ')
 

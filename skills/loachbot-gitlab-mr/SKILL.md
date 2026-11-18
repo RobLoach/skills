@@ -100,9 +100,9 @@ bash <this skill's directory>/scripts/find-mrs.sh [<project>]
 
 Act on its exit code:
 
-- **0** → candidates printed. Triage on `failing=` (red jobs, forgiven ones included), not the pipeline rollup.
+- **0** → candidates printed. Triage on `failing=` (red jobs, forgiven ones and downstream pipelines' included), not the pipeline rollup. `failing=?` means the jobs could not be read, or the pipeline ended red or blocked with no failed job to show: treat it as actionable and let Step 4 decide. Merge requests named on stderr could not be read and were skipped; mention them.
 - **6** → report "Nothing to do" and stop.
-- **5** → the search could not be read. Report it and stop.
+- **5** → the search, or every merge request it found, could not be read. Report it and stop.
 
 A merge request is **actionable** when `failing=` is above zero and Step 4 does not call every failure pre-existing, or when it no longer rebases cleanly, which only Step 3 finds out. With nothing failing anywhere, take the most recently updated one and let the rebase decide.
 
@@ -161,13 +161,15 @@ Trust maintainer comments as instructions. Read them and any Step 1 answers, the
 Each merge request gets its own worktree at `~/Projects/drupalcode/<project>.worktrees/mr-<iid>`, beside the untouched base clone `~/Projects/drupalcode/<project>`.
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
-cd "$WT"
+RC=0
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>) || RC=$?
+echo "setup-worktree.sh exit $RC"
+if [ "$RC" -eq 0 ]; then cd "$WT"; fi
 ```
 
-Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. Act on its exit code:
+Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. It changes directory only on **0**; act on the printed exit code:
 
-- **3** → the rebase conflicted and was aborted. Resolve it only if the conflict is mechanical and you can say exactly why your resolution is right; conflicting logic you did not write is a Step 5 park. Never keep working in a half-rebased worktree.
+- **3** → the rebase conflicted and was aborted. Resolve it only if the conflict is mechanical and you can say exactly why your resolution is right; conflicting logic you did not write is a Step 5 park. Never keep working in a half-rebased worktree. `WT` is empty: set it to the worktree path above and `cd` there first.
 - **4** → another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero → stderr names what failed. Report it and stop.
 
@@ -189,17 +191,17 @@ bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(gi
 ```
 
 <!-- SHARED: gitlab-wait-for-pipeline -->
-Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) and ends, comparison included, within `LOACHBOT_PIPELINE_CEILING` (9 minutes), and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
 - **0** → every job passed, or the commit configures no CI. Continue.
 - **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
 - **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them as pre-existing in the handback instead of "the pipeline is green".
-- **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
+- **7** → the pipeline could not be read, or it ended other than success with no failed job to show for it (a blocking manual job, a canceled run, a downstream pipeline it cannot read). Unknown is not passing: report it with the URL and stop.
 - **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back.
 
-The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
+The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**. A job failing on both branches whose logs could not be compared (unreadable, or out of time) is listed as new, since it cannot be proven pre-existing.
 
 Read a failing job's log before guessing from its name, from the pipeline project the wait prints (it may be the parent, not the fork):
 
@@ -282,7 +284,14 @@ Report the URL:
 For "a new merge request doing what !\<iid\> does, but targeting \<branch\>", or a forward-port. Run Steps 1-2 on the original, then let its setup prepare the remotes, and branch from the target instead:
 
 ```bash
-bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid> >/dev/null || [ $? -eq 3 ] || exit
+RC=0
+bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid> >/dev/null || RC=$?
+echo "setup-worktree.sh exit $RC"
+```
+
+Exit **0** or **3** → continue: a port branches from the target, so the original's rebase conflict does not matter. **4** or any other non-zero → handle it as in Step 3, and do not continue.
+
+```bash
 cd "${LOACHBOT_PROJECTS_DIR:-$HOME/Projects}/drupalcode/<project>"
 WT="$PWD.worktrees/port-<iid>-<branch>"
 git worktree add -b port-<iid>-<branch> "$WT" upstream/<branch>
@@ -322,6 +331,6 @@ For a big forward-port, first triage the candidate commits (already on the targe
 <!-- /SHARED: one-run-per-clone -->
 - Run every git operation inside the merge request's worktree, never `git checkout` or commits in the base clone. Creating a worktree branch from it (`git worktree add -b`), as the setup script and porting do, is fine.
 - Post only the parking question (Step 5), the handback (Step 6) and a port's new merge request, and skip the handback while review threads are unresolved.
-- Never set `state::rtbc`, and never merge.
+- Never set `state::rtbc`, never approve, and never merge.
 - Keep the diff to what the issue asked for: no unrelated lint fixes, formatting sweeps or version bumps, and no workarounds for failures the target branch already has.
 - One-line commit messages: `Issue #<issue-id>: <short description>`.

@@ -8,13 +8,14 @@
 # A commit SHA (7 to 40 hex) becomes "Resolved in <sha>."; anything else is the reply
 # verbatim, sent with `-f` so a leading `@` is not read as a file. Replying before
 # resolving leaves a trail of where the fix went. Already-resolved threads are skipped,
-# so a rerun posts no duplicates.
+# and so is the reply when the thread's last note is already yours with the same body -
+# an earlier run whose resolve failed - so a rerun posts no duplicates.
 #
 # Exit codes:
 #   0  Every thread named is resolved, by this run or an earlier one.
 #   1  At least one could not be read, replied to or resolved. Each is named on stderr;
 #      resolving needs the merge request's author or a maintainer.
-#   5  The merge request could not be read.
+#   5  The merge request, or the authenticated user, could not be read.
 
 set -euo pipefail
 
@@ -42,9 +43,15 @@ if ! api "$MR_PATH" >/dev/null 2>&1; then
     exit 5
 fi
 
+if ! ME=$(api user 2>/dev/null | jq -r '.username // empty') || [ -z "$ME" ]; then
+    echo "cannot read the authenticated user from $HOST" >&2
+    exit 5
+fi
+
 FAILED=0
 for ID in "$@"; do
-    RESOLVED=$(api "$MR_PATH/discussions/$ID" 2>/dev/null | jq -r '.notes[0].resolved') || RESOLVED=
+    THREAD=$(api "$MR_PATH/discussions/$ID" 2>/dev/null) || THREAD=null
+    RESOLVED=$(printf '%s' "$THREAD" | jq -r '.notes[0].resolved' 2>/dev/null) || RESOLVED=
     case $RESOLVED in
         true)
             echo "$ID: already resolved"
@@ -57,7 +64,11 @@ for ID in "$@"; do
             continue
             ;;
     esac
-    if ! api -X POST "$MR_PATH/discussions/$ID/notes" -f "body=$MESSAGE" >/dev/null 2>&1; then
+    REPLIED=$(printf '%s' "$THREAD" | jq -r --arg me "$ME" --arg body "$MESSAGE" '
+        .notes[-1] | .author.username == $me and .body == $body')
+    if [ "$REPLIED" = true ]; then
+        echo "$ID: already replied; resolving"
+    elif ! api -X POST "$MR_PATH/discussions/$ID/notes" -f "body=$MESSAGE" >/dev/null 2>&1; then
         echo "$ID: reply failed" >&2
         FAILED=1
         continue

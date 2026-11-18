@@ -8,12 +8,15 @@
 # `issue_queue` comes from the project's `issues_enabled` flag, not an empty issue list:
 # a queue that never migrated (core, eck) has the tracker off, while a freshly migrated
 # one is legitimately empty. `open_issues` is one page; `capped` says the queue is
-# larger, the cue to search per candidate.
+# larger, the cue to search per candidate. `open_merge_requests` is one page too - core
+# has thousands - and `mrs_capped` says there may be more. Labels and branches are read
+# in full: a plan must not guess a label, or a branch, that sits on page two.
 #
 # Keys: project, path, default_branch, archived, issue_queue ("gitlab" | "drupal.org"),
 # open_issues_count, capped, labels, branches [{name, default}], tags [{name, date}],
 # open_issues [{iid, title, labels, updated_at, url, mrs}], recently_closed
-# [{iid, title, updated_at, url}], open_merge_requests [{iid, title, source_branch, url}].
+# [{iid, title, updated_at, url}], open_merge_requests [{iid, title, source_branch, url}],
+# mrs_capped.
 #
 # Exit codes:
 #   0  Context on stdout, as one JSON object.
@@ -31,6 +34,7 @@ NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
 ENC="$NAMESPACE%2F$PROJECT"
 PAGE=100
+MR_PAGE=50
 
 api() { glab api --hostname "$HOST" "$@"; }
 
@@ -56,6 +60,14 @@ read_array() {
     fi
 }
 
+# The same, every page: --paginate prints one array per page, so they are slurped into one.
+read_all() {
+    if ! api --paginate "$2" 2>/dev/null | jq -sc 'add' >"$TMP/$1.json" 2>/dev/null ||
+        [ "$(jq -r 'type' "$TMP/$1.json" 2>/dev/null)" != "array" ]; then
+        printf '[]' >"$TMP/$1.json"
+    fi
+}
+
 printf '[]' >"$TMP/open_issues.json"
 printf '[]' >"$TMP/closed_issues.json"
 if [ "$(printf '%s' "$META" | jq -r '.issues_enabled')" = "true" ]; then
@@ -66,16 +78,17 @@ if [ "$(printf '%s' "$META" | jq -r '.issues_enabled')" = "true" ]; then
         "projects/$ENC/issues?state=closed&order_by=updated_at&sort=desc&per_page=50"
 fi
 
-read_array labels "projects/$ENC/labels?per_page=$PAGE"
-read_array branches "projects/$ENC/repository/branches?per_page=$PAGE"
+read_all labels "projects/$ENC/labels?per_page=$PAGE"
+read_all branches "projects/$ENC/repository/branches?per_page=$PAGE"
 read_array tags "projects/$ENC/repository/tags?per_page=10"
 read_array merge_requests \
-    "projects/$ENC/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50"
+    "projects/$ENC/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=$MR_PAGE"
 
 jq -n \
     --arg project "$PROJECT" \
     --arg path "$NAMESPACE/$PROJECT" \
     --argjson page "$PAGE" \
+    --argjson mr_page "$MR_PAGE" \
     --slurpfile meta "$TMP/meta.json" \
     --slurpfile open_issues "$TMP/open_issues.json" \
     --slurpfile closed_issues "$TMP/closed_issues.json" \
@@ -106,5 +119,6 @@ jq -n \
             iid, title, labels, updated_at, url: .web_url, mrs: .merge_requests_count
         }],
         recently_closed: [$closed_issues[] | {iid, title, updated_at, url: .web_url}],
-        open_merge_requests: [$merge_requests[] | {iid, title, source_branch, url: .web_url}]
+        open_merge_requests: [$merge_requests[] | {iid, title, source_branch, url: .web_url}],
+        mrs_capped: (($merge_requests | length) >= $mr_page)
     }'

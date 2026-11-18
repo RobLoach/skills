@@ -42,6 +42,10 @@ fi
 # Keep stdout for the path alone, so `WT=$(...)` needs no filtering.
 exec 3>&1 1>&2
 
+# git's own exit codes include 3 and 4 (`git remote add` exits 3 on an existing remote),
+# which the caller would read as a conflict or a live worktree; any unplanned failure is 1.
+trap 'echo "failed: $BASH_COMMAND"; exit 1' ERR
+
 HOST=${LOACHBOT_GITLAB_HOST:-git.drupalcode.org}
 NAMESPACE=${LOACHBOT_GITLAB_NAMESPACE:-project}
 PROJECT=$1
@@ -87,7 +91,15 @@ fi
 cd "$BASE"
 
 # A clone made by hand may only have `origin`; add `upstream` beside it, not over it.
-remote() { git remote set-url "$1" "$2" 2>/dev/null || git remote add "$1" "$2"; }
+# Asked first rather than inferred from a failed set-url, which also fails on a locked
+# config and would then misreport it as "remote already exists".
+remote() {
+    if git remote get-url "$1" >/dev/null 2>&1; then
+        git remote set-url "$1" "$2"
+    else
+        git remote add "$1" "$2"
+    fi || die "cannot point remote $1 at $2"
+}
 remote upstream "$UPSTREAM_URL"
 remote "$FORK_REMOTE" "$FORK_URL"
 

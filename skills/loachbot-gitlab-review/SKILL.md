@@ -154,11 +154,14 @@ The diff is in `<tmp>/review.json`. Fetch whole files only when the hunks are no
 
 ```bash
 jq -r '.files[] | "=== \(.new_path)\n\(.diff)"' <tmp>/review.json
+jq -r '.files[] | select(.too_large or .collapsed) | .new_path' <tmp>/review.json
 
 # <path> is URL-encoded: dots become %2E, slashes %2F.
 glab api --hostname git.drupalcode.org \
     "projects/<namespace>%2F<project>/repository/files/<path>/raw?ref=<head-sha>"
 ```
+
+A file flagged `too_large` or `collapsed` comes with an empty `diff`, which is not "nothing to review". Diff it yourself from the two raw files, `ref=<base-sha>` against `ref=<head-sha>` (both from `diff_refs`), with `diff -u`; a new or deleted file has only one side. If even that is too large to read, say in the summary which files went unreviewed.
 
 Split the review across sub-agents by *concern*, not file, launched together per [Sub-agents](#sub-agents). A reasonable default is one each for correctness, Drupal API conventions, tests and security, each given the diff and the Step 3 summary.
 
@@ -188,7 +191,7 @@ bash <this skill's directory>/scripts/compare-to-target.sh <project> <iid>
 - **0** → nothing failing, or all pre-existing: mention those in the summary as not this branch's, not as findings.
 - **1** → `new:` failures are this branch's: findings. `+` lines are a log diff with numbers masked, so read the log before citing one.
 - **6** → no target pipeline to compare: everything under `new:` is a finding, and say it could not be checked.
-- **7** → no pipeline, or its jobs unreadable: say so in the summary.
+- **7** → no pipeline, its jobs unreadable, or it is not a success (still running, blocked on a manual job, canceled, red downstream) with no failed job to show: say so in the summary.
 
 Read a log from `pipeline_project_id`, not the fork:
 
@@ -256,11 +259,13 @@ When nothing blocks, **stop**. Do not set `state::rtbc`, approve or merge: say n
 Only when the user asks to apply findings to the merge request. This leaves the read-only review, under `loachbot-gitlab-mr`'s rules. Take a worktree on the fork's branch, rebased:
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>)
-cd "$WT"
+RC=0
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> mr <iid>) || RC=$?
+echo "setup-worktree.sh exit $RC"
+if [ "$RC" -eq 0 ]; then cd "$WT"; fi
 ```
 
-Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork.
+Its stderr ends with `remote=fork-mr-<iid>`, the merge request's own remote for its fork. It changes directory only on **0**; act on the printed exit code:
 
 - **3** → the rebase conflicted and was aborted. Leave it to `loachbot-gitlab-mr`; report it and stop.
 - **4** → another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
@@ -273,12 +278,12 @@ git push --force-with-lease fork-mr-<iid> "HEAD:<source-branch>"
 bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> <iid> "$(git rev-parse HEAD)"
 ```
 
-Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison.
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) and ends, comparison included, within `LOACHBOT_PIPELINE_CEILING` (9 minutes).
 
 - **0** → every job passed, or the commit configures no CI. Continue.
 - **1** → `new:` lists what the fixes broke. Fix it and push again; after two attempts, report the failing jobs and stop without resolving threads.
 - **2** → only failures the target branch already has. Fix nothing; name them in the report.
-- **7** → the pipeline could not be read. Report it with the URL and stop.
+- **7** → the pipeline could not be read, or it ended other than success with no failed job to show for it (a blocking manual job, a canceled run, a downstream pipeline it cannot read). Report it with the URL and stop.
 - **8** → still running, or no pipeline has appeared yet. Run it again; after three runs, report the pending jobs and stop.
 
 Read a failing job's log with Step 5's `job-log.sh`, from the pipeline project the wait prints.
@@ -291,7 +296,7 @@ bash <this skill's directory>/scripts/resolve-threads.sh <project> <iid> <commit
 
 - **0** → resolved. Report the commits.
 - **1** → the threads named on stderr were not resolved; resolving needs the author or a maintainer. Report them.
-- **5** → the merge request could not be read. Report it.
+- **5** → the merge request, or your own user, could not be read. Report it. A rerun is safe: a thread whose last note is already your reply is resolved without replying again.
 
 Then remove the worktree, its local branch and its remote; the work is pushed:
 

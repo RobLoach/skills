@@ -9,9 +9,12 @@
 # /do:fork creates it with <issue-iid>-issue-branch, /do:access grants push - and polls,
 # since both are queued rather than answered.
 #
-# A fork this run created is also waited on until its import finishes and
-# <issue-iid>-issue-branch exists: a worktree set up before then has no tracking ref, and
-# the first --force-with-lease push is rejected as stale once the branch lands.
+# The fork is then waited on until its import finishes: one somebody else asked for
+# moments ago can be as unfinished as one this run created. A fork this run created is
+# also waited on until <issue-iid>-issue-branch exists: a worktree set up before then has
+# no tracking ref, and the first --force-with-lease push is rejected as stale once the
+# branch lands. An existing fork may legitimately have no such branch (deleted, or never
+# pushed), and setup-worktree.sh then starts one, so it is not waited on for one.
 #
 # A 404 is confirmed by a second read before /do:fork is posted, so one dropped
 # connection cannot put a duplicate fork request on the issue.
@@ -21,10 +24,12 @@
 #
 # Exit codes:
 #   0  The fork exists and you have push access. JSON on stdout.
-#   5  The project, its issue or its existing fork could not be read; nothing was posted.
-#   6  /do:fork or /do:access was posted but drupalbot did not act within the wait, or
-#      the fork it created never finished importing. Report it with the issue URL - the
-#      comment is public, so do not post it again.
+#   5  The project, its issue or its existing fork could not be read, or that fork
+#      never finished importing; nothing was posted.
+#   6  /do:fork or /do:access was posted - or posting it failed, and it may have landed
+#      anyway - but drupalbot did not act within the wait, or the fork it created never
+#      finished importing. Report it with the issue URL - the comment is public, so do
+#      not post it again.
 
 set -euo pipefail
 
@@ -49,6 +54,15 @@ MAX_POLLS=${LOACHBOT_FORK_MAX_POLLS:-24}
 MIN_ACCESS=30
 
 api() { glab api --hostname "$HOST" "$@"; }
+
+# A failed post may still have reached the issue, so it is treated like one drupalbot
+# ignored rather than retried.
+post() {
+    if ! glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "$1" >&2; then
+        echo "posting $1 failed; it may still have landed, so do not post it again" >&2
+        exit 6
+    fi
+}
 
 # An unreadable response is fed to jq as `null` rather than nothing: jq prints nothing
 # for empty input, and an empty string would then break a numeric comparison.
@@ -79,7 +93,7 @@ fi
 
 if [ -z "$FORK_ID" ]; then
     echo "no fork at $FORK_PATH; asking drupalbot to create one" >&2
-    glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:fork" >&2
+    post "/do:fork"
     CREATED=true
     for _ in $(seq 1 "$MAX_POLLS"); do
         sleep "$POLL_SECONDS"
@@ -100,28 +114,24 @@ fork_ready() {
     FORK_SSH_URL=$(printf '%s' "${json:-null}" | jq -r '
         if type == "object" and ((.import_status // "none") | IN("finished", "none"))
         then (.ssh_url_to_repo // empty) else empty end')
-    [ -n "$FORK_SSH_URL" ] &&
+    [ -n "$FORK_SSH_URL" ] || return 1
+    [ "$CREATED" != true ] ||
         api "projects/$FORK_ID/repository/branches/$IID-issue-branch" >/dev/null 2>&1
 }
 
 FORK_SSH_URL=
-if [ "$CREATED" = true ]; then
-    READY=false
-    for _ in $(seq 1 "$MAX_POLLS"); do
-        if fork_ready; then
-            READY=true
-            break
-        fi
-        echo "waiting for $FORK_PATH to finish importing" >&2
-        sleep "$POLL_SECONDS"
-    done
-    if [ "$READY" != true ]; then
-        echo "$FORK_PATH exists but never finished importing $IID-issue-branch" >&2
-        exit 6
+READY=false
+for _ in $(seq 1 "$MAX_POLLS"); do
+    if fork_ready; then
+        READY=true
+        break
     fi
-elif ! FORK_SSH_URL=$(api "projects/$FORK_ID" 2>/dev/null | jq -r '.ssh_url_to_repo // empty') ||
-    [ -z "$FORK_SSH_URL" ]; then
-    echo "cannot read $FORK_PATH (project $FORK_ID) on $HOST" >&2
+    echo "waiting for $FORK_PATH to finish importing" >&2
+    sleep "$POLL_SECONDS"
+done
+if [ "$READY" != true ]; then
+    echo "$FORK_PATH (project $FORK_ID) is unreadable or never finished importing" >&2
+    if [ "$CREATED" = true ]; then exit 6; fi
     exit 5
 fi
 
@@ -139,7 +149,7 @@ ACCESS=$(my_access)
 
 if [ "$ACCESS" -lt "$MIN_ACCESS" ]; then
     echo "no push access to $FORK_PATH (access level $ACCESS); asking drupalbot with /do:access" >&2
-    glab issue note "$IID" -R "$HOST/$NAMESPACE/$PROJECT" -m "/do:access" >&2
+    post "/do:access"
     ACCESS_VIA=comment
     for _ in $(seq 1 "$MAX_POLLS"); do
         sleep "$POLL_SECONDS"

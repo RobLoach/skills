@@ -133,7 +133,7 @@ bash <this skill's directory>/scripts/read-issue.sh <project> <issue-iid> > <tmp
 jq -r '"\(.source) \(.status) writable=\(.writable)"' <tmp>/issue.json
 ```
 
-For a *named* issue, `source: "drupal.org"` or exit **6** means its queue never moved to GitLab and there is no `/do:` path to claim it: say so, point the user at `loachbot-gitlab-mr` for an existing merge request, and stop. A named issue outside `find-issues.sh`'s open-state allowlist is not waiting on code: say so and stop.
+For a *named* issue, `source: "drupal.org"` means its queue never moved to GitLab and there is no `/do:` path to claim it: say so, point the user at `loachbot-gitlab-mr` for an existing merge request, and stop. Exit **6** means it could not be read: report it and stop. Exit **7** means the number belongs to another project: report it and stop. A named issue outside `find-issues.sh`'s open-state allowlist is not waiting on code: say so and stop.
 
 If nothing survives, report "Nothing to do" and stop.
 
@@ -158,7 +158,7 @@ Act on its exit code:
 
 - **0** → it's yours. Continue.
 - **7** → claimed by somebody else since the search; nothing posted. Return to Step 1 for the next candidate.
-- **6** → posted, but drupalbot never acted. Report it with the issue URL and stop; do not post again or start work.
+- **6** → posted (or the post failed and may have landed anyway), but drupalbot never acted. Report it with the issue URL and stop; do not post again or start work.
 - **5** → the issue could not be read. Report it and stop.
 
 Report the URL immediately:
@@ -194,19 +194,21 @@ jq -r '"\(.fork_path) id=\(.fork_id) created=\(.created) access_via=\(.access_vi
 Act on its exit code:
 
 - **0** → fork exists and is writable. Continue.
-- **6** → drupalbot never acted, or the fork it made never finished importing. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
-- **5** → the project, the issue or its fork could not be read; nothing was posted. Report it and stop.
+- **6** → a `/do:` command was posted (or its post failed and may have landed anyway), but drupalbot never acted, or the fork it made never finished importing. Report it with the issue URL and stop; do not ask again. A later run picks it up as a `resume`.
+- **5** → the project, the issue or its fork could not be read, or an existing fork never finished importing; nothing was posted. Report it and stop.
 
 Then take a worktree at `~/Projects/drupalcode/<project>.worktrees/issue-<issue-iid>`:
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> issue <issue-iid>)
-cd "$WT"
+RC=0
+WT=$(bash <this skill's directory>/scripts/setup-worktree.sh <project> issue <issue-iid>) || RC=$?
+echo "setup-worktree.sh exit $RC"
+if [ "$RC" -eq 0 ]; then cd "$WT"; fi
 ```
 
-Its stderr ends with `remote=fork-issue-<issue-iid>`, `fork_branch=`, `target_branch=` and `resumed=` for Step 6. Act on its exit code:
+Its stderr ends with `remote=fork-issue-<issue-iid>`, `fork_branch=`, `target_branch=` and `resumed=` for Step 6. It changes directory only on **0**; act on the printed exit code:
 
-- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; anything else is a Step 8 park. Never work in a half-rebased worktree.
+- **3** — rebase conflicted and was aborted. Resolve only a mechanical conflict you can justify; anything else is a Step 8 park. Never work in a half-rebased worktree. `WT` is empty: set it to the worktree path above and `cd` there first.
 - **4** — another live worktree (named on stderr) has the branch. Remove it only if it is a LoachBot worktree under `<project>.worktrees/` and `git -C <stale-path> status --short` prints nothing: `git worktree remove <stale-path>`, then `git worktree prune`, and rerun. Otherwise it may hold somebody's uncommitted work: report it and stop.
 - Any other non-zero — stderr names what failed. Report it and stop; do not force through it.
 
@@ -277,17 +279,17 @@ bash <this skill's directory>/scripts/wait-for-pipeline.sh <project> "$MR_IID" "
 ```
 
 <!-- SHARED: gitlab-wait-for-pipeline -->
-Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) plus the comparison, and a shorter limit kills it before it can exit with a code.
+Run it with a 600000 ms tool timeout: it waits up to `LOACHBOT_PIPELINE_TIMEOUT` (7 minutes) and ends, comparison included, within `LOACHBOT_PIPELINE_CEILING` (9 minutes), and a shorter limit kills it before it can exit with a code.
 
 Act on its exit code:
 
 - **0** → every job passed, or the commit configures no CI. Continue.
 - **1** → `new:` lists what this branch introduced. **Fix all of it, forgiven or not.** Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; at most two fix-and-push attempts, then park per *When it's unclear*. `+` lines are a log diff with numbers masked: a lead, not a verdict.
 - **2** → every failure also fails on the target branch. Fix nothing and work around nothing (skipped tests, baseline entries, `allow_failure` edits); name them as pre-existing in the handback instead of "the pipeline is green".
-- **7** → the pipeline could not be read. Unknown is not passing: report it with the URL and stop.
+- **7** → the pipeline could not be read, or it ended other than success with no failed job to show for it (a blocking manual job, a canceled run, a downstream pipeline it cannot read). Unknown is not passing: report it with the URL and stop.
 - **8** → still running, or no pipeline has appeared yet, when the call ended. Run it again; after three runs, report the pending jobs and URL, then stop without handing back.
 
-The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**.
+The split comes from `scripts/compare-to-target.sh`: its **1**, **6** (no target pipeline) and **7** all surface here as **1**. A job failing on both branches whose logs could not be compared (unreadable, or out of time) is listed as new, since it cannot be proven pre-existing.
 
 Read a failing job's log before guessing from its name, from the pipeline project the wait prints (it may be the parent, not the fork):
 

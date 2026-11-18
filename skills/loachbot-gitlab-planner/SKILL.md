@@ -80,11 +80,13 @@ Do not proceed without one.
 Read the default branch from a detached worktree beside the shared clone at `~/Projects/drupalcode/<project>`:
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-plan-worktree.sh <project>)
-cd "$WT"
+RC=0
+WT=$(bash <this skill's directory>/scripts/setup-plan-worktree.sh <project>) || RC=$?
+echo "setup-plan-worktree.sh exit $RC"
+if [ "$RC" -eq 0 ]; then cd "$WT"; fi
 ```
 
-Act on its exit code:
+It changes directory only on **0**; act on the printed exit code:
 
 - **6** → the project could not be read. Check the machine name and namespace (a sandbox needs `LOACHBOT_GITLAB_NAMESPACE=sandbox`), then report it and stop.
 - Any other non-zero → report the failing git command from stderr and stop.
@@ -114,7 +116,7 @@ Then branch on `issue_queue`:
     ```
     Without `drupalorg`, say plainly that no duplicate check was possible and every item needs checking by hand before filing.
 
-`capped: true` means `open_issues` is a sample: say so when presenting, and search per candidate in Step 6.
+`capped: true` means `open_issues` is a sample: say so when presenting, and search per candidate in Step 6. `mrs_capped: true` means the same of `open_merge_requests`: search merge requests per candidate too (`merge_requests?state=opened&search=<keywords>`).
 
 If `archived: true`, raise it before going further.
 
@@ -205,14 +207,14 @@ EOF
 )"
 ```
 
-- **Labels only from Step 3's `labels` list**, for category and priority. An undefined label is created on filing, a near-duplicate spelling in the queue; omit rather than guess. Never a `state::` label: triage is the maintainers', and `loachbot-gitlab-issue` reads none as ready.
+- **Labels only from Step 3's `labels` list**, for category and priority. An undefined label is created on filing, a near-duplicate spelling in the queue; omit rather than guess. Never a `state::` label: triage is the maintainers', and `loachbot-gitlab-issue` already treats an issue with no `state::` label as ready.
 - **No assignee.** A claim is a `/do:assign me` comment; pre-assigning claims work you have not started.
 
 When Step 3 reported `issue_queue: "drupal.org"`, there is nothing to POST to. Hand the approved issues to the user as ready-to-paste summaries and point them at the form:
 
 > `https://www.drupal.org/node/add/project-issue/<project>`
 
-Then report, in plan order, each filed issue's URL or drafted body, and what is left: maintainer triage (component, version, `state::accepted`), after which `loachbot-gitlab-issue` can pick them up. Do not list unapproved items as pending.
+Then report, in plan order, each filed issue's URL or drafted body, and that `loachbot-gitlab-issue` can pick the filed ones up right away: they are yours, unassigned and carry no `state::` label. Maintainers may still triage them (component, version, a `state::` label). Do not list unapproved items as pending.
 
 ## Rules
 

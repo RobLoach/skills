@@ -10,7 +10,8 @@
 # A parking run comments first and renames second, so a reply is anything after the
 # newest rename. GitLab embeds the new title in its rename note as HTML, which is not
 # worth parsing: if the current title carries the suffix, the latest rename parked it.
-# Inline review comments are ordinary notes, so they count as replies too.
+# Inline review comments are ordinary notes, so they count as replies too. drupalbot's
+# notes and drupalbot commands (a note with a `/do:` line) are traffic, not answers.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
@@ -59,7 +60,10 @@ fi
 
 REPLIES=$(printf '%s' "$NOTES" | jq -c --arg parked "$PARKED" '
     .[]
-    | select(.system == false and .created_at > $parked)
+    | select(.system == false
+             and .created_at > $parked
+             and .author.username != "drupalbot"
+             and (.body | test("(^|\n)[ \t]*/do:") | not))
     | {author: .author.username, created_at, body}
 ')
 
