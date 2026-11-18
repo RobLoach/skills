@@ -14,9 +14,10 @@
 #
 # Exit codes:
 #   0  Clean and current. Stdout is the clone path, and nothing else.
-#   5  The existing clone holds local work: uncommitted or untracked files, or a
-#      detached HEAD with commits no branch holds. What was found has been printed to
-#      stderr; report it to the user and stop.
+#   5  The existing clone cannot be used as it is: it holds local work (uncommitted or
+#      untracked files, or a detached HEAD with commits no branch holds), or its origin
+#      is not <owner>/<repo> (e.g. the user's clone of a fork). What was found has been
+#      printed to stderr; report it to the user and stop.
 
 set -euo pipefail
 
@@ -39,6 +40,21 @@ if [ ! -d "$BASE" ]; then
 fi
 
 cd "$BASE"
+
+# The plan is read from origin's default branch, so a clone of a fork would quietly plan
+# against the fork. Matched by owner/repo alone, whatever the scheme (ssh or https),
+# `.git` suffix or case.
+ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+FOUND=${ORIGIN%/}
+FOUND=${FOUND%.git}
+FOUND_REPO=${FOUND##*[:/]}
+FOUND=${FOUND%[:/]*}
+FOUND="${FOUND##*[:/]}/$FOUND_REPO"
+if [ "$(printf '%s' "$FOUND" | tr '[:upper:]' '[:lower:]')" != \
+    "$(printf '%s' "$OWNER/$REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo "clone has origin ${ORIGIN:-(none)}, not $OWNER/$REPO"
+    exit 5
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
     echo "clone has uncommitted local changes:"

@@ -57,10 +57,10 @@ When the user asks for several runs ("five times", "until there aren't any left"
 <!-- SHARED: parking -->
 ## Parking
 
-To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. Issues and Pull Requests share these endpoints:
+To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. End the question with the `<!-- loachbot:parked -->` marker, which GitHub hides: the bot posts as you, and the marker is how your own question is told apart from your instructions on a later run. Issues and Pull Requests share these endpoints:
 
 ```bash
-gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question>"
+gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question> <!-- loachbot:parked -->"
 gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<original title> (Needs Info)"
 ```
 
@@ -116,12 +116,22 @@ Report the URL immediately:
 ### 2. Check out the pull request in a dedicated worktree
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> pr <number>)
-cd "$WT"
+# A failed command substitution leaves WT empty and `cd ""` succeeds, so read the exit
+# code before moving anywhere; 9 still prints a usable path.
+WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> pr <number>) && RC=0 || RC=$?
+echo "setup-github-worktree.sh exited $RC"
+if [ "$RC" -eq 0 ] || [ "$RC" -eq 9 ]; then
+    cd "$WT"
+    # A fork's branch may be renamed <owner>/<branch> and track the fork by URL, where a
+    # bare `git push` refuses; Step 4 pushes to the PR head these name instead.
+    PUSH_REMOTE=$(git config "branch.$(git branch --show-current).remote")
+    PUSH_REF=$(git config "branch.$(git branch --show-current).merge")
+fi
 ```
 
 - **4** → another worktree (named on stderr) has the PR branch checked out, possibly the user's own. Report it and stop; never remove it or force-switch branches across worktrees.
 <!-- SHARED: github-worktree-exit-9 -->
+- **5** → the base clone's `origin` is not `<owner>/<repo>` (stderr shows the URL), e.g. the user's clone of a fork. Report it and stop; never re-point or rename the user's remotes.
 - **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the work does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
 - Any other non-zero → stderr names the failing command. Report it and stop; do not force through.
 <!-- /SHARED: github-worktree-exit-9 -->
@@ -134,33 +144,33 @@ Read the PR and your own feedback on it in one call:
 bash <this skill's directory>/scripts/fetch-feedback.sh <owner> <repo> <number>
 ```
 
-- **0** → one JSON line per `kind`: `pr` (`title`, `body`, `last_commit`), `review`, `comment` and `inline`, the comments with the numeric `id` Step 4 reacts to.
+- **0** → one JSON line per `kind`: `pr` (`title`, `body`, `head`), `review` (`on_head: true` when no push has followed it), `comment` and `inline`, the comments with the numeric `id` Step 4 reacts to. [Parking](#parking) questions are already left out.
 - **5** → a read failed (stderr names it). Report it and stop; a partial list would hide work.
 
 Review summaries take no reactions; treat them as context. Address comments with `handled: false` (not yet 🚀'd). Handled comments stay binding: if one said a change is not needed, do not reintroduce it. For a resumed `(Needs Info)` PR, apply Step 1's answers to the comments they reply to.
 
 Investigate what comments refer to via [Sub-agents](#sub-agents).
 
-If there is nothing to address (no un-🚀'd comment, and no review summary newer than `last_commit`), the PR is a draft for another reason. Do **not** mark it ready. Run Step 6's cleanup without `gh pr ready`, tell the user why it was skipped, and return to Step 1.
+If there is nothing to address (no un-🚀'd comment, and no review summary with `on_head: true`), the PR is a draft for another reason. Do **not** mark it ready. Run Step 6's cleanup without `gh pr ready`, tell the user why it was skipped, and return to Step 1, skipping this PR and every other one already examined this run; it is still an open draft, so the search finds it again.
 
 ### 4. Do the work
 
 Address every comment from Step 3. Delegate per [Sub-agents](#sub-agents), passing `$WT` and the proving command; independent comments run concurrently.
 
-Test where possible, then review `git status --short` and stage only the files the change meant to touch: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them. Commit and push (the branch tracks the PR head):
+Test where possible, then review `git status --short` and stage only the files the change meant to touch: delete stray artifacts (screenshots, test output) or leave them untracked, never commit them. Commit and push to the PR head from Step 2:
 
 ```bash
 git add <paths>
 # Skip the empty commit when no code changed.
 if ! git diff --cached --quiet; then
     git commit -m "<one-line message>"
-    git push
+    git push "$PUSH_REMOTE" "HEAD:$PUSH_REF"
 fi
 ```
 
-A comment asking to fix conflicts means rebase, never merge: `git fetch origin`, `git rebase origin/<base>` where `<base>` is `gh pr view <number> --json baseRefName --jq .baseRefName`, then `git push --force-with-lease` (a plain push is refused after a rebase). Regenerate conflicting generated or built files with the project's build rather than hand-merging them. If a conflict needs judgment, `git rebase --abort` and leave the comment unreacted.
+A comment asking to fix conflicts means rebase, never merge: note the PR head first (`gh pr view <number> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`), `git fetch origin`, `git rebase origin/<base>` where `<base>` is `gh pr view <number> --json baseRefName --jq .baseRefName`, then `git push --force-with-lease="$PUSH_REF:<noted head>" "$PUSH_REMOTE" "HEAD:$PUSH_REF"` (a plain push is refused after a rebase, and a bare `--force-with-lease` is refused for a fork tracked by URL, which has no remote-tracking ref to compare). Regenerate conflicting generated or built files with the project's build rather than hand-merging them. If a conflict needs judgment, `git rebase --abort` and leave the comment unreacted.
 
-A comment asking for a change in another repository (e.g. an upstream library) gets its own PR there. Work in a new worktree off that repo's base clone `<other-owner>/<other-repo>` under the projects directory (cloned if missing); never in a local clone with uncommitted work. Open the PR, link it in a reply to the comment, react 🚀 and remove that worktree; do not wait on its CI.
+A comment asking for a change in another repository (e.g. an upstream library) gets its own PR there. Work in a new worktree off that repo's base clone `<other-owner>/<other-repo>` under the projects directory (cloned if missing); never in a local clone with uncommitted work. Open the PR, link it in a reply to the comment ending with the hidden `<!-- loachbot:reply -->` marker (the reply is posted as you, so without it a later run reads it as new feedback), react 🚀 and remove that worktree; do not wait on its CI.
 
 React 🚀 to each comment only once handled: the change was pushed, or you verified none is needed. Step 3 relies on this marker, so never react earlier:
 
@@ -183,13 +193,15 @@ If the work deviates from the PR title or body, update them to match.
 Waits up to about 30 minutes:
 
 ```bash
-bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number>
+# The pushed SHA keeps the previous commit's green checks from passing for this one.
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> <number> "$(git rev-parse HEAD)"
 ```
 
 <!-- SHARED: github-wait-for-checks -->
 - **0** → passed, or no CI. Continue.
 - **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
-- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **7** → nothing failed, but a check was cancelled or is waiting on approval (action required); there is no log to fix. Once per run, re-run each such run (id from the same `link`) with `gh run rerun <run-id> --repo <owner>/<repo>` and wait again. If it returns 7 again, report the checks and the PR URL, then stop without un-assigning or marking ready.
 <!-- /SHARED: github-wait-for-checks -->
 
 ### 6. Mark the Pull Request as ready

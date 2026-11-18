@@ -14,12 +14,17 @@
 #   pr     `gh pr checkout`, which resolves fork remotes. The branch may be the user's
 #          own checkout, so a worktree holding it is reported, never taken. `--force`
 #          resets a leftover local branch, which cannot fast-forward after a force-push.
+#          A fork's branch may come back renamed <owner>/<branch> and tracking the fork
+#          by URL, so push it to its configured remote and merge ref, not `origin`.
 #
 # Exit codes:
 #   0  Ready. Stdout is the worktree path.
 #   3  issue only: the rebase onto the default branch conflicted. It has been aborted
 #      and the worktree left in place.
 #   4  pr only: the PR branch is checked out by another worktree, named on stderr.
+#   5  The existing clone's origin is not <owner>/<repo> (e.g. the user's clone of a
+#      fork, with the real repository as `upstream`); its URL is on stderr. Nothing was
+#      changed.
 #   9  A submodule could not be fetched (e.g. "not our ref": the branch pins a commit
 #      that no longer exists). The worktree is ready and its path still printed; the
 #      failing submodule is named on stderr.
@@ -50,6 +55,22 @@ if [ ! -d "$BASE" ]; then
 fi
 
 cd "$BASE"
+
+# Everything below fetches, rebases onto and pushes to origin, so a clone of a fork would
+# quietly work against the wrong repository. Matched by owner/repo alone, whatever the
+# scheme (ssh or https), `.git` suffix or case.
+ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+FOUND=${ORIGIN%/}
+FOUND=${FOUND%.git}
+FOUND_REPO=${FOUND##*[:/]}
+FOUND=${FOUND%[:/]*}
+FOUND="${FOUND##*[:/]}/$FOUND_REPO"
+if [ "$(printf '%s' "$FOUND" | tr '[:upper:]' '[:lower:]')" != \
+    "$(printf '%s' "$OWNER/$REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo "$BASE has origin ${ORIGIN:-(none)}, not $OWNER/$REPO"
+    exit 5
+fi
+
 git fetch origin --prune
 
 rm -rf "$WT"
@@ -61,18 +82,25 @@ holder() {
 }
 
 if [ "$MODE" = pr ]; then
-    BRANCH=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" --json headRefName --jq '.headRefName')
-    HOLDER=$(holder "$BRANCH")
-    if [ -n "$HOLDER" ]; then
-        echo "$BRANCH is checked out by worktree $HOLDER"
-        exit 4
+    # A fork's headRefName says nothing about the local name: a fork PR from `main`
+    # matches the base clone's own `main`, which would always read as taken.
+    HEAD_INFO=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" \
+        --json headRefName,isCrossRepository --jq '"\(.isCrossRepository) \(.headRefName)"')
+    CROSS=${HEAD_INFO%% *}
+    BRANCH=${HEAD_INFO#* }
+    if [ "$CROSS" = false ]; then
+        HOLDER=$(holder "$BRANCH")
+        if [ -n "$HOLDER" ]; then
+            echo "$BRANCH is checked out by worktree $HOLDER"
+            exit 4
+        fi
     fi
     git worktree add --detach "$WT"
     cd "$WT"
     if ! ERR=$(gh pr checkout "$NUMBER" --repo "$OWNER/$REPO" --force 2>&1); then
         printf '%s\n' "$ERR" >&2
-        # gh names a fork's branch <owner>/<branch> when it would shadow the default
-        # branch, which the check above does not see; git still refuses to share it.
+        # Fork branches skip the check above, and gh may rename them <owner>/<branch>;
+        # either way git still refuses to share a branch between worktrees.
         case "$ERR" in
             *"already checked out"* | *"already used by worktree"*) exit 4 ;;
         esac

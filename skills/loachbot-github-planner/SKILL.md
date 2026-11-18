@@ -61,11 +61,17 @@ For several repos, run Steps 2-5 once per repo and present the plans together in
 Clone into `~/Projects/<owner>/<repo>`, or check out the remote default branch in an existing clone (detached, so no local branch is moved):
 
 ```bash
-CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>)
-cd "$CLONE"
+# A failed command substitution leaves CLONE empty and `cd ""` succeeds, so read the
+# exit code before moving anywhere.
+CLONE=$(bash <this skill's directory>/scripts/sync-clone.sh <owner> <repo>) && RC=0 || RC=$?
+echo "sync-clone.sh exited $RC"
+if [ "$RC" -eq 0 ]; then
+    cd "$CLONE"
+fi
 ```
 
-If it exits **5**, the clone holds local work (uncommitted or untracked files, or commits only a detached HEAD holds). Report what the script printed and stop. Never clobber it: it may be the user's own working clone.
+- **5** → the clone holds local work (uncommitted or untracked files, or commits only a detached HEAD holds), or its `origin` is not `<owner>/<repo>` (e.g. a clone of a fork). Report what the script printed and stop. Never clobber it or re-point its remotes: it may be the user's own working clone.
+- Any other non-zero → stderr names the failing command. Report it and stop.
 
 ### 3. Get acquainted with the project
 
@@ -78,17 +84,18 @@ At minimum, read:
 - `gh release list --repo <owner>/<repo> --limit 10`: cadence and what shipped
 - `gh issue list --repo <owner>/<repo> --limit 100 --state all`: tracked, in flight, recently closed
 - `gh pr list --repo <owner>/<repo> --limit 50 --state all`: in flight or recently merged
-- `gh api repos/<owner>/<repo>/milestones --jq '.[].title'`: milestones to slot the plan into
+- `gh api --paginate repos/<owner>/<repo>/milestones --jq '.[].title'`: milestones to slot the plan into
 
 Fan these out across concurrent sub-agents per [Sub-agents](#sub-agents) and plan from their summaries, keeping raw file contents out of the main thread.
 
-The issue and PR lists are capped. Compare against the real total:
+The issue and PR lists are capped at 100 and 50. Compare each against its real total:
 
 ```bash
 gh api "search/issues?q=repo:<owner>/<repo>+is:issue&per_page=1" --jq '.total_count'
+gh api "search/issues?q=repo:<owner>/<repo>+is:pr&per_page=1" --jq '.total_count'
 ```
 
-If the total exceeds what the list returned, treat the list as a sample, say so when presenting the plan, and search per candidate in Step 5.
+If either total exceeds what its list returned, treat the list as a sample, say so when presenting the plan, and search per candidate in Step 5.
 
 Optionally triage the open queue: issues that look done or obsolete (fixed by a merged PR or commit, code since removed), and open issues worth prioritizing alongside the new plan.
 
@@ -131,8 +138,10 @@ Check each against the issues and PRs from step 3. If the lists were capped, als
 
 ```bash
 # Omit `--state`: it only accepts open|closed; leaving it off searches both.
-gh search issues --repo <owner>/<repo> --limit 10 "<two or three keywords from the candidate>" \
-    --json number,title,state,url --jq '.[] | "#\(.number) [\(.state)] \(.title)"'
+# `--include-prs`: without it a PR already fixing the candidate is never seen.
+gh search issues --include-prs --repo <owner>/<repo> --limit 10 "<two or three keywords from the candidate>" \
+    --json number,title,state,url,isPullRequest \
+    --jq '.[] | "#\(.number) [\(if .isPullRequest then "PR" else "issue" end) \(.state)] \(.title)"'
 ```
 
 Drop the candidate if any existing item, merged PR or open PR covers the same root cause, code location, fix or goal, whatever its title. When in doubt, drop it. On a fresh pass, also drop anything already proposed in this conversation.
@@ -167,7 +176,7 @@ Report each created issue URL in plan order. Leave the rest unfiled.
 
 ## Rules
 
-- Never push, open PRs, close issues, or edit the project's code until the user picks that path for named items in Step 6. Until then, nothing beyond Step 2's reset is written locally or to the remote.
+- Never push, open PRs, close issues, or edit the project's code until the user picks that path for named items in Step 6. Until then, nothing beyond Step 2's checkout is written locally or to the remote.
 <!-- SHARED: one-run-per-clone -->
 - One run per base clone at a time. LoachBot skills share `~/Projects/<owner>/<repo>` (GitHub) or `~/Projects/drupalcode/<project>` (drupal.org); two runs fetching, resetting or deleting branches in one clone corrupt each other. Different clones, and sub-agents within a run, may overlap.
 <!-- /SHARED: one-run-per-clone -->

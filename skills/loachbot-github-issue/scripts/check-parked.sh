@@ -8,6 +8,8 @@
 #
 # A parking run comments first and renames second, so a reply is anything after the
 # newest parking rename. `pr` also counts inline review comments and review summaries.
+# Bots (CI reporters, dependency updaters) comment on their own schedule, so they never
+# count as an answer.
 #
 # Exit codes:
 #   0  Answered. The replies are printed, one JSON object per line.
@@ -33,9 +35,12 @@ KIND=${4:-issue}
 ERR=$(mktemp)
 trap 'rm -f "$ERR"' EXIT
 
+# A bot is flagged by its account type, but an app's login ends in [bot] either way.
+HUMAN='def human: .user.type != "Bot" and ((.user.login // "") | endswith("[bot]") | not);'
+
 # <description> <endpoint> <jq filter>: prints the filtered result, or exits 5.
 read_api() {
-    if ! gh api --paginate "$2" --jq "$3" 2>"$ERR"; then
+    if ! gh api --paginate "$2" --jq "$HUMAN $3" 2>"$ERR"; then
         cat "$ERR" >&2
         echo "cannot read the $1 of $OWNER/$REPO#$NUMBER" >&2
         exit 5
@@ -55,17 +60,17 @@ fi
 export PARKED
 
 REPLIES=$(read_api comments "repos/$OWNER/$REPO/issues/$NUMBER/comments" \
-    '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, body}')
+    '.[] | select(.created_at > env.PARKED and human) | {author: .user.login, created_at, body}')
 
 INLINE=
 REVIEWS=
 if [ "$KIND" = "pr" ]; then
     INLINE=$(read_api "review comments" "repos/$OWNER/$REPO/pulls/$NUMBER/comments" \
-        '.[] | select(.created_at > env.PARKED) | {author: .user.login, created_at, path, body}')
+        '.[] | select(.created_at > env.PARKED and human) | {author: .user.login, created_at, path, body}')
     # A review summary is where an answer often goes, and it is neither kind of comment.
     # An empty body is a bare approval or the shell around inline comments counted above.
     REVIEWS=$(read_api reviews "repos/$OWNER/$REPO/pulls/$NUMBER/reviews" \
-        '.[] | select(.submitted_at != null and .submitted_at > env.PARKED and (.body // "") != "")
+        '.[] | select(.submitted_at != null and .submitted_at > env.PARKED and (.body // "") != "" and human)
              | {author: .user.login, created_at: .submitted_at, body}')
 fi
 

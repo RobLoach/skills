@@ -57,10 +57,10 @@ When the user asks for several runs ("five times", "until there aren't any left"
 <!-- SHARED: parking -->
 ## Parking
 
-To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. Issues and Pull Requests share these endpoints:
+To park an item, post one short question naming what you need, then append ` (Needs Info)` to its title, and stop without un-assigning or marking it ready. Comment first, rename second: `check-parked.sh` treats anything after the rename as the reply, so renaming first would let your own question un-park it in a loop. End the question with the `<!-- loachbot:parked -->` marker, which GitHub hides: the bot posts as you, and the marker is how your own question is told apart from your instructions on a later run. Issues and Pull Requests share these endpoints:
 
 ```bash
-gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question>"
+gh api -X POST "repos/<owner>/<repo>/issues/<number>/comments" -f body="<one short question> <!-- loachbot:parked -->"
 gh api -X PATCH "repos/<owner>/<repo>/issues/<number>" -f title="<original title> (Needs Info)"
 ```
 
@@ -120,13 +120,14 @@ Report the pick to the user immediately:
 ### 2. Understand the issue
 
 - Read the body: `gh api repos/<owner>/<repo>/issues/<number>`
-- Read the logged-in user's comments; those are the instructions to trust:
+- Read the logged-in user's comments; those are the instructions to trust, except a [parking](#parking) question, which the bot posted as you:
     ```bash
     # `export` so the filter can read it as `env.AUTHOR`.
     export AUTHOR
     AUTHOR=$(gh api user --jq '.login')
     gh api --paginate "repos/<owner>/<repo>/issues/<number>/comments" \
-        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body}'
+        --jq '.[] | select(.user.login == env.AUTHOR) | {id, created_at, html_url, body}
+              | select((.body // "") | contains("<!-- loachbot:parked -->") | not)'
     ```
 - For a resumed issue, treat Step 1's answers as clarification of the question asked, not new open-ended instructions.
 
@@ -135,12 +136,18 @@ Investigate through parallel sub-agents, keeping file contents out of the main t
 ### 3. Do the work
 
 ```bash
-WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> issue <number>)
-cd "$WT"
+# A failed command substitution leaves WT empty and `cd ""` succeeds, so read the exit
+# code before moving anywhere; 9 still prints a usable path.
+WT=$(bash <this skill's directory>/scripts/setup-github-worktree.sh <owner> <repo> issue <number>) && RC=0 || RC=$?
+echo "setup-github-worktree.sh exited $RC"
+if [ "$RC" -eq 0 ] || [ "$RC" -eq 9 ]; then
+    cd "$WT"
+fi
 ```
 
-- **3** — the rebase conflicted and was aborted. [Park](#parking) it; never work in a half-rebased worktree.
+- **3** → the rebase conflicted and was aborted. [Park](#parking) it; never work in a half-rebased worktree.
 <!-- SHARED: github-worktree-exit-9 -->
+- **5** → the base clone's `origin` is not `<owner>/<repo>` (stderr shows the URL), e.g. the user's clone of a fork. Report it and stop; never re-point or rename the user's remotes.
 - **9** → a submodule could not be fetched (stderr names it); the worktree is still usable. If the work does not touch that submodule, continue without it. Otherwise [park](#parking) it, naming the submodule.
 - Any other non-zero → stderr names the failing command. Report it and stop; do not force through.
 <!-- /SHARED: github-worktree-exit-9 -->
@@ -149,14 +156,17 @@ Delegate the implementation per [Sub-agents](#sub-agents), passing `$WT` and the
 
 ```bash
 git add <paths>
-if git diff --cached --quiet; then
-    echo "nothing staged: no code change was needed"
-else
+if ! git diff --cached --quiet; then
     git commit -m "<one-line message>"
+# A run that stopped on pending CI already pushed the fix, so the resumed branch has it.
+elif [ "$(git rev-list --count origin/<default-branch>..HEAD)" -ne 0 ]; then
+    echo "nothing new staged: the branch already carries an earlier run's fix"
+else
+    echo "nothing staged: no code change was needed"
 fi
 ```
 
-If nothing was staged (already fixed, or a question rather than a defect), open no Pull Request. [Park](#parking) it with a comment saying what you found, so a human decides whether to close it.
+If the branch already carries an earlier run's fix, continue to the push below; it reuses that run's PR and re-checks CI. If nothing was staged and the branch has no commits of its own (already fixed, or a question rather than a defect), open no Pull Request. [Park](#parking) it with a comment saying what you found, so a human decides whether to close it.
 
 Push and make sure a PR exists:
 
@@ -180,13 +190,15 @@ If the push fails for lack of access, [park](#parking) it; it is a permissions p
 Verify CI (the script waits up to about 30 minutes):
 
 ```bash
-bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER"
+# The pushed SHA keeps the previous commit's green checks from passing for this one.
+bash <this skill's directory>/scripts/wait-for-checks.sh <owner> <repo> "$PR_NUMBER" "$(git rev-parse HEAD)"
 ```
 
 <!-- SHARED: github-wait-for-checks -->
 - **0** → passed, or no CI. Continue.
 - **8** → still pending, or status unreadable (stderr says which). Report it and the PR URL, then stop without un-assigning or marking ready; a later run picks it up.
-- **1** → a check failed or was cancelled. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **1** → a check failed. Get the run id from `gh pr checks <pr-number> --repo <owner>/<repo> --json name,state,link`, read `gh run view <run-id> --repo <owner>/<repo> --log-failed`, fix and push. At most two attempts, never un-assigning or marking ready while red; if still red or it needs human judgment, [park](#parking) it, naming the failing checks.
+- **7** → nothing failed, but a check was cancelled or is waiting on approval (action required); there is no log to fix. Once per run, re-run each such run (id from the same `link`) with `gh run rerun <run-id> --repo <owner>/<repo>` and wait again. If it returns 7 again, report the checks and the PR URL, then stop without un-assigning or marking ready.
 <!-- /SHARED: github-wait-for-checks -->
 
 ### 4. Un-assign when done

@@ -4,7 +4,11 @@
 #
 # Wait for a Pull Request's CI checks to settle.
 #
-# Usage: bash scripts/wait-for-checks.sh <owner> <repo> <pr-number>
+# Usage: bash scripts/wait-for-checks.sh <owner> <repo> <pr-number> [head-sha]
+#
+# Right after a push the PR still reports the previous commit's checks, already green,
+# so pass the pushed commit (`git rev-parse HEAD`, the full SHA) as head-sha: nothing is
+# judged until the PR's head is that commit. Without it, whatever head is current counts.
 #
 # `gh pr checks` exits 1 for failed checks, for no checks, and for a dropped connection,
 # so the verdict comes from `--json bucket` instead; a failed read is retried, not failed.
@@ -16,24 +20,30 @@
 # template-imposed `allow_failure` it is hand-written, usually meaning "known noisy", so
 # those steps are listed but leave the exit code alone.
 #
+# Cancelled and action-required checks (gh files the latter under `fail`) have no
+# failure log to fix, so they get their own code instead of sending the caller to edit.
+#
 # Exit codes:
 #   0  Checks passed, or the repository has no CI at all. Soft-failed steps, if any, are
 #      listed first - passing here means the checks are green, not that nothing failed.
-#   8  Unsettled: still pending after the full wait, or the status could not be read at
-#      all (API failure, auth, unexpected output); stderr says which. Unknown is not
-#      passing.
-#   1  At least one check failed or was cancelled.
+#   8  Unsettled: still pending after the full wait, the PR head never reached
+#      head-sha, or the status could not be read at all (API failure, auth, unexpected
+#      output); stderr says which. Unknown is not passing.
+#   1  At least one check failed.
+#   7  Nothing failed, but at least one check was cancelled or is waiting on approval
+#      (action required).
 
 set -uo pipefail
 
-if [ "$#" -ne 3 ]; then
-    echo "usage: bash scripts/wait-for-checks.sh <owner> <repo> <pr-number>" >&2
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+    echo "usage: bash scripts/wait-for-checks.sh <owner> <repo> <pr-number> [head-sha]" >&2
     exit 64
 fi
 
 OWNER=$1
 REPO=$2
 NUMBER=$3
+EXPECTED=${4:-}
 
 ATTEMPTS=${LOACHBOT_CHECKS_ATTEMPTS:-30}
 INTERVAL=${LOACHBOT_CHECKS_INTERVAL:-60}
@@ -65,10 +75,23 @@ while [ "$ATTEMPT" -lt "$ATTEMPTS" ]; do
     [ "$ATTEMPT" -eq 1 ] || sleep "$INTERVAL"
     PROBLEM=
 
-    if BUCKETS=$(gh pr checks "$NUMBER" --repo "$OWNER/$REPO" \
-        --json bucket --jq '[.[].bucket] | unique | join(" ")' 2>"$ERR"); then
+    # Cleared once matched: the checks read below then belong to the expected commit.
+    if [ -n "$EXPECTED" ]; then
+        HEAD_SHA=$(gh pr view "$NUMBER" --repo "$OWNER/$REPO" \
+            --json headRefOid --jq '.headRefOid' 2>"$ERR") || HEAD_SHA=
+        if [ "$HEAD_SHA" != "$EXPECTED" ]; then
+            PROBLEM="PR head is ${HEAD_SHA:-unreadable}, not yet the pushed $EXPECTED"
+            continue
+        fi
+        EXPECTED=
+    fi
+
+    if BUCKETS=$(gh pr checks "$NUMBER" --repo "$OWNER/$REPO" --json bucket,state \
+        --jq '[.[] | if .state == "ACTION_REQUIRED" then "action" else .bucket end]
+              | unique | join(" ")' 2>"$ERR"); then
         case " $BUCKETS " in
-            *" fail "* | *" cancel "*) STATUS=1; break ;;
+            *" fail "*) STATUS=1; break ;;
+            *" cancel "* | *" action "*) STATUS=7; break ;;
             *" pending "*) SEEN=1; continue ;;
             "  ") ;; # No checks yet; fall through to the empty-probe count.
             *) STATUS=0; break ;;
